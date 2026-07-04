@@ -580,6 +580,8 @@ impl App {
             pending_agent_notifications: std::collections::HashMap::new(),
             copy_feedback: None,
             outer_terminal_focus: None,
+            host_entry_intent: None,
+            suppress_next_host_entry_mouse_focus: false,
             prefix_code,
             prefix_mods,
             default_sidebar_width: config.ui.sidebar_width,

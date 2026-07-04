@@ -163,6 +163,9 @@ impl App {
                     self.request_full_redraw();
                 }
                 self.state.outer_terminal_focus = Some(true);
+                if self.state.consume_host_entry_intent(Instant::now()) {
+                    self.request_full_redraw();
+                }
                 self.state.mark_active_tab_seen();
                 true
             }

@@ -1,11 +1,15 @@
+use std::time::{Duration, Instant};
+
 use crate::config::{Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, ToastDelivery};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
 
 use crate::detect::AgentState;
-use crate::layout::{PaneId, PaneInfo, SplitBorder};
+use crate::layout::{NavDirection, PaneId, PaneInfo, SplitBorder};
 use crate::selection::Selection;
+
+const HOST_ENTRY_INTENT_TTL: Duration = Duration::from_millis(750);
 
 pub(crate) type InstalledPluginRegistry =
     std::collections::HashMap<String, crate::api::schema::InstalledPluginInfo>;
@@ -1261,6 +1265,12 @@ pub(crate) struct PaneFocusTarget {
     pub pane_id: PaneId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HostEntryIntent {
+    pub direction: NavDirection,
+    pub created_at: Instant,
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
@@ -1273,6 +1283,8 @@ pub struct AppState {
     pub workspaces: Vec<Workspace>,
     pub active: Option<usize>,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
+    pub(crate) host_entry_intent: Option<HostEntryIntent>,
+    pub(crate) suppress_next_host_entry_mouse_focus: bool,
     pub selected: usize,
     pub mode: Mode,
     pub should_quit: bool,
@@ -1602,6 +1614,93 @@ impl AppState {
         }
         ws.active_tab().map(|tab| tab.layout.focused()) == Some(pane_id)
     }
+
+    pub(crate) fn prepare_host_entry(&mut self, direction: NavDirection, now: Instant) {
+        self.host_entry_intent = Some(HostEntryIntent {
+            direction,
+            created_at: now,
+        });
+    }
+
+    pub(crate) fn consume_host_entry_intent(&mut self, now: Instant) -> bool {
+        let Some(intent) = self.host_entry_intent.take() else {
+            return false;
+        };
+        if now.saturating_duration_since(intent.created_at) > HOST_ENTRY_INTENT_TTL {
+            return false;
+        }
+        let Some((ws_idx, pane_id)) = self.host_entry_target_pane(intent.direction) else {
+            return false;
+        };
+        let changed = self.focus_pane_in_workspace(ws_idx, pane_id);
+        self.mode = Mode::Terminal;
+        self.suppress_next_host_entry_mouse_focus = true;
+        changed
+    }
+
+    pub(crate) fn consume_host_entry_mouse_focus_suppression(&mut self) -> bool {
+        let suppress = self.suppress_next_host_entry_mouse_focus;
+        self.suppress_next_host_entry_mouse_focus = false;
+        suppress
+    }
+
+    pub(crate) fn clear_host_entry_mouse_focus_suppression(&mut self) {
+        self.suppress_next_host_entry_mouse_focus = false;
+    }
+
+    fn host_entry_target_pane(&self, direction: NavDirection) -> Option<(usize, PaneId)> {
+        let ws_idx = self.active?;
+        let ws = self.workspaces.get(ws_idx)?;
+        let tab = ws.active_tab()?;
+        let focused = tab.layout.focused();
+        let mut panes = self
+            .view
+            .pane_infos
+            .iter()
+            .filter(|pane| tab.panes.contains_key(&pane.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if panes.is_empty() {
+            panes = tab.layout.panes(self.view.terminal_area);
+        }
+        if panes.is_empty() {
+            return None;
+        }
+
+        let edge = panes
+            .iter()
+            .map(|pane| host_entry_edge_coordinate(pane.rect, direction))
+            .reduce(|best, value| match direction {
+                NavDirection::Left | NavDirection::Up => best.max(value),
+                NavDirection::Right | NavDirection::Down => best.min(value),
+            })?;
+
+        let mut candidates = panes
+            .into_iter()
+            .filter(|pane| host_entry_edge_coordinate(pane.rect, direction) == edge)
+            .collect::<Vec<_>>();
+        if let Some(pane) = candidates.iter().find(|pane| pane.id == focused) {
+            return Some((ws_idx, pane.id));
+        }
+        candidates.sort_by_key(|pane| host_entry_tie_breaker(pane.rect, direction));
+        candidates.first().map(|pane| (ws_idx, pane.id))
+    }
+}
+
+fn host_entry_edge_coordinate(rect: Rect, direction: NavDirection) -> u32 {
+    match direction {
+        NavDirection::Left => u32::from(rect.x) + u32::from(rect.width),
+        NavDirection::Right => u32::from(rect.x),
+        NavDirection::Up => u32::from(rect.y) + u32::from(rect.height),
+        NavDirection::Down => u32::from(rect.y),
+    }
+}
+
+fn host_entry_tie_breaker(rect: Rect, direction: NavDirection) -> (u16, u16) {
+    match direction {
+        NavDirection::Left | NavDirection::Right => (rect.y, rect.x),
+        NavDirection::Up | NavDirection::Down => (rect.x, rect.y),
+    }
 }
 
 #[cfg(test)]
@@ -1632,6 +1731,8 @@ impl AppState {
             workspaces: Vec::new(),
             active: None,
             previous_pane_focus: None,
+            host_entry_intent: None,
+            suppress_next_host_entry_mouse_focus: false,
             selected: 0,
             mode: Mode::Navigate,
             should_quit: false,

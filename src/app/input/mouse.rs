@@ -99,6 +99,10 @@ impl AppState {
         terminal_runtimes: &mut TerminalRuntimeRegistry,
         mouse: MouseEvent,
     ) -> Option<MouseAction> {
+        if !matches!(mouse.kind, MouseEventKind::Moved) {
+            self.clear_host_entry_mouse_focus_suppression();
+        }
+
         if self.mode == Mode::Onboarding {
             self.handle_onboarding_mouse(mouse);
             return None;
@@ -988,7 +992,8 @@ impl AppState {
             MouseEventKind::Moved if self.mode == Mode::Terminal && !in_sidebar => {
                 if let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() {
                     let _ = self.forward_pane_mouse_motion(terminal_runtimes, &info, mouse);
-                    if self.focus_follows_mouse {
+                    let suppress_focus = self.consume_host_entry_mouse_focus_suppression();
+                    if self.focus_follows_mouse && !suppress_focus {
                         let ws_idx = self.active?;
                         let tab_idx = self.workspaces.get(ws_idx)?.active_tab_index();
                         if !self.is_active_pane(ws_idx, tab_idx, info.id) {
@@ -2147,6 +2152,49 @@ mod tests {
             Bytes::from_static(b"\x1b[<35;3;4M")
         );
         assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn host_entry_mouse_move_suppression_preserves_next_real_mouse_focus() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let first_pane = ws.tabs[0].root_pane;
+        let second_pane = ws.test_split(Direction::Horizontal);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.focus_follows_mouse = true;
+        app.state.workspaces[0].tabs[0]
+            .layout
+            .focus_pane(first_pane);
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let second_info = app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == second_pane)
+            .expect("second pane info")
+            .clone();
+        app.state.suppress_next_host_entry_mouse_focus = true;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Moved,
+            second_info.inner_rect.x,
+            second_info.inner_rect.y,
+        ));
+
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(first_pane));
+        assert!(!app.state.suppress_next_host_entry_mouse_focus);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Moved,
+            second_info.inner_rect.x,
+            second_info.inner_rect.y,
+        ));
+
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(second_pane));
     }
 
     #[tokio::test]

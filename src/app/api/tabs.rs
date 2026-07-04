@@ -216,11 +216,18 @@ impl App {
     }
 
     pub(super) fn handle_tab_close(&mut self, id: String, target: TabTarget) -> String {
+        match self.close_tab(id.clone(), &target) {
+            Ok(()) => encode_success(id, ResponseResult::Ok {}),
+            Err(response) => response,
+        }
+    }
+
+    pub(super) fn close_tab(&mut self, id: String, target: &TabTarget) -> Result<(), String> {
         let Some((ws_idx, tab_idx)) = self.parse_tab_id(&target.tab_id) else {
-            return tab_not_found(id, &target.tab_id);
+            return Err(tab_not_found(id, &target.tab_id));
         };
         let Some(tab_id) = self.public_tab_id(ws_idx, tab_idx) else {
-            return tab_not_found(id, &target.tab_id);
+            return Err(tab_not_found(id, &target.tab_id));
         };
         let workspace_id = self.public_workspace_id(ws_idx);
         let terminal_ids = self.state.terminal_ids_for_tab(ws_idx, tab_idx);
@@ -232,21 +239,21 @@ impl App {
             .map(|tab| tab.layout.pane_ids())
             .unwrap_or_default();
         let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
-            return tab_not_found(id, &target.tab_id);
+            return Err(tab_not_found(id, &target.tab_id));
         };
         if ws.tabs.len() <= 1 {
-            return encode_error(
+            return Err(encode_error(
                 id,
                 "tab_close_failed",
                 "cannot close the last tab in a workspace",
-            );
+            ));
         }
         if !ws.close_tab(tab_idx) {
-            return encode_error(
+            return Err(encode_error(
                 id,
                 "tab_close_failed",
                 format!("tab {} could not be closed", target.tab_id),
-            );
+            ));
         }
         for pane_id in pane_ids {
             self.state.plugin_panes.remove(&pane_id);
@@ -262,7 +269,7 @@ impl App {
             },
         });
 
-        encode_success(id, ResponseResult::Ok {})
+        Ok(())
     }
 
     fn tab_list_info(&self, ws_idx: usize) -> Vec<crate::api::schema::TabInfo> {

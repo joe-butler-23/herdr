@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub mod agents;
 pub mod common;
 pub mod events;
+pub mod host;
 pub mod integrations;
 pub mod panes;
 pub mod plugins;
@@ -16,6 +17,7 @@ pub mod worktrees;
 pub use agents::*;
 pub use common::*;
 pub use events::*;
+pub use host::*;
 pub use integrations::*;
 pub use panes::*;
 pub use plugins::*;
@@ -61,6 +63,12 @@ pub enum Method {
     ClientWindowTitleSet(ClientWindowTitleSetParams),
     #[serde(rename = "client.window_title.clear")]
     ClientWindowTitleClear(EmptyParams),
+    #[serde(rename = "host.navigate")]
+    HostNavigate(HostNavigateParams),
+    #[serde(rename = "host.prepare_entry")]
+    HostPrepareEntry(HostPrepareEntryParams),
+    #[serde(rename = "host.close")]
+    HostClose(EmptyParams),
     #[serde(rename = "session.snapshot")]
     SessionSnapshot(EmptyParams),
     #[serde(rename = "workspace.create")]

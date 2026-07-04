@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 mod agents;
 mod env;
+mod host;
 mod integrations;
 mod layouts;
 mod panes;
@@ -867,6 +868,11 @@ impl App {
                     },
                 );
             }
+            Method::HostNavigate(params) => return self.handle_host_navigate(request.id, params),
+            Method::HostPrepareEntry(params) => {
+                return self.handle_host_prepare_entry(request.id, params);
+            }
+            Method::HostClose(_) => return self.handle_host_close(request.id),
             Method::SessionSnapshot(_) => return self.handle_session_snapshot(request.id),
             Method::WorkspaceList(_) => return self.handle_workspace_list(request.id),
             Method::WorkspaceGet(target) => return self.handle_workspace_get(request.id, target),

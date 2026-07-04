@@ -1487,6 +1487,28 @@
           ],
           "type": "object"
         },
+        "HostNavigateParams": {
+          "properties": {
+            "direction": {
+              "$ref": "#/schemas/request/$defs/PaneDirection"
+            }
+          },
+          "required": [
+            "direction"
+          ],
+          "type": "object"
+        },
+        "HostPrepareEntryParams": {
+          "properties": {
+            "direction": {
+              "$ref": "#/schemas/request/$defs/PaneDirection"
+            }
+          },
+          "required": [
+            "direction"
+          ],
+          "type": "object"
+        },
         "IntegrationInstallParams": {
           "properties": {
             "target": {
@@ -3671,6 +3693,54 @@
         {
           "properties": {
             "method": {
+              "const": "host.navigate",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/HostNavigateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "host.prepare_entry",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/HostPrepareEntryParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "host.close",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "session.snapshot",
               "type": "string"
             },
@@ -5805,6 +5875,58 @@
             "pane_agent_status_changed"
           ],
           "type": "string"
+        },
+        "HostCloseAction": {
+          "enum": [
+            "close_pane",
+            "close_tab",
+            "close_host",
+            "noop"
+          ],
+          "type": "string"
+        },
+        "HostCloseResult": {
+          "properties": {
+            "action": {
+              "$ref": "#/schemas/success_response/$defs/HostCloseAction"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        "HostNavigateResult": {
+          "properties": {
+            "at_edge": {
+              "type": "boolean"
+            },
+            "changed": {
+              "type": "boolean"
+            },
+            "focused_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "changed",
+            "at_edge"
+          ],
+          "type": "object"
+        },
+        "HostPrepareEntryResult": {
+          "properties": {
+            "armed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "armed"
+          ],
+          "type": "object"
         },
         "InstalledPluginInfo": {
           "properties": {
@@ -7961,6 +8083,54 @@
                 "type",
                 "changed",
                 "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "navigate": {
+                  "$ref": "#/schemas/success_response/$defs/HostNavigateResult"
+                },
+                "type": {
+                  "const": "host_navigate",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "navigate"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "entry": {
+                  "$ref": "#/schemas/success_response/$defs/HostPrepareEntryResult"
+                },
+                "type": {
+                  "const": "host_prepare_entry",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "entry"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "close": {
+                  "$ref": "#/schemas/success_response/$defs/HostCloseResult"
+                },
+                "type": {
+                  "const": "host_close",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "close"
               ],
               "type": "object"
             },

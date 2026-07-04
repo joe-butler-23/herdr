@@ -1340,6 +1340,24 @@ impl HeadlessServer {
         }
     }
 
+    fn consume_host_entry_intent_after_focus_gained(
+        &mut self,
+        client_id: u64,
+        events: &[crate::raw_input::RawInputEvent],
+    ) {
+        if self.foreground_client_id != Some(client_id)
+            || !events
+                .iter()
+                .any(|event| matches!(event, crate::raw_input::RawInputEvent::OuterFocusGained))
+            || !self.app.state.consume_host_entry_intent(Instant::now())
+        {
+            return;
+        }
+        if let Some(client) = self.clients.get_mut(&client_id) {
+            client.request_semantic_redraw_after_input();
+        }
+    }
+
     /// Accepts pending client connections from the non-blocking listener.
     #[cfg(unix)]
     fn accept_client_connections(&mut self) -> io::Result<()> {
@@ -2411,6 +2429,7 @@ impl HeadlessServer {
         if foreground_changed {
             self.resize_shared_runtime_to_effective_size_before_input();
         }
+        self.consume_host_entry_intent_after_focus_gained(client_id, &events);
         let theme_changed = self.update_client_host_theme_from_events(client_id, &events);
         self.app
             .route_client_events(events, self.foreground_client_id == Some(client_id));
@@ -6374,6 +6393,56 @@ next_tab = ""
         assert_eq!(server.foreground_client_id, Some(1));
         assert_eq!(server.clients[&1].outer_terminal_focus, Some(true));
         assert_eq!(server.app.state.outer_terminal_focus, Some(true));
+    }
+
+    #[test]
+    fn host_prepare_entry_is_consumed_after_headless_focus_gained() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let root = workspace.tabs[0].root_pane;
+        let right = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        workspace.tabs[0].layout.focus_pane(root);
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.ensure_test_terminals();
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                None,
+            ),
+        );
+
+        let response = server.app.handle_api_request(crate::api::schema::Request {
+            id: "prepare".into(),
+            method: crate::api::schema::Method::HostPrepareEntry(
+                crate::api::schema::HostPrepareEntryParams {
+                    direction: crate::api::schema::PaneDirection::Left,
+                },
+            ),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["result"]["type"], "host_prepare_entry");
+
+        assert!(server.handle_server_event(ServerEvent::ClientInput {
+            client_id: 1,
+            data: b"\x1b[I".to_vec(),
+        }));
+
+        assert_eq!(server.foreground_client_id, Some(1));
+        assert_eq!(server.clients[&1].outer_terminal_focus, Some(true));
+        assert_eq!(
+            server.app.state.workspaces[0].focused_pane_id(),
+            Some(right)
+        );
+        assert!(server.app.state.suppress_next_host_entry_mouse_focus);
     }
 
     #[test]

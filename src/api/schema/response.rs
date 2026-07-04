@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::agents::AgentInfo;
 use super::common::{ClientWindowTitleReason, NotificationShowReason};
 use super::events::EventEnvelope;
+use super::host::{HostCloseResult, HostNavigateResult, HostPrepareEntryResult};
 use super::integrations::{
     IntegrationInstallResult, IntegrationTarget, IntegrationUninstallResult,
 };
@@ -172,6 +173,15 @@ pub enum ResponseResult {
     ClientWindowTitle {
         changed: bool,
         reason: ClientWindowTitleReason,
+    },
+    HostNavigate {
+        navigate: HostNavigateResult,
+    },
+    HostPrepareEntry {
+        entry: HostPrepareEntryResult,
+    },
+    HostClose {
+        close: HostCloseResult,
     },
     IntegrationInstall {
         target: IntegrationTarget,
