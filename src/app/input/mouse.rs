@@ -988,6 +988,16 @@ impl AppState {
             MouseEventKind::Moved if self.mode == Mode::Terminal && !in_sidebar => {
                 if let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() {
                     let _ = self.forward_pane_mouse_motion(terminal_runtimes, &info, mouse);
+                    if self.focus_follows_mouse {
+                        let ws_idx = self.active?;
+                        let tab_idx = self.workspaces.get(ws_idx)?.active_tab_index();
+                        if !self.is_active_pane(ws_idx, tab_idx, info.id) {
+                            return Some(MouseAction::FocusPane {
+                                ws_idx,
+                                pane_id: info.id,
+                            });
+                        }
+                    }
                 }
             }
 
@@ -2060,10 +2070,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn moved_mouse_does_not_focus_inactive_pane_by_default() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let first_pane = ws.tabs[0].root_pane;
+        let second_pane = ws.test_split(Direction::Horizontal);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.focus_follows_mouse = false;
+        app.state.workspaces[0].tabs[0]
+            .layout
+            .focus_pane(first_pane);
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let second_info = app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == second_pane)
+            .expect("second pane info")
+            .clone();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Moved,
+            second_info.inner_rect.x,
+            second_info.inner_rect.y,
+        ));
+
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(first_pane));
+    }
+
+    #[tokio::test]
+    async fn moved_mouse_focuses_inactive_pane_when_configured_and_still_forwards_motion() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let first_pane = ws.tabs[0].root_pane;
+        let second_pane = ws.test_split(Direction::Horizontal);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.focus_follows_mouse = true;
+        app.state.workspaces[0].tabs[0]
+            .layout
+            .focus_pane(first_pane);
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let second_info = app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == second_pane)
+            .expect("second pane info")
+            .clone();
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                second_info.inner_rect.width,
+                second_info.inner_rect.height,
+                0,
+                b"\x1b[?1003h\x1b[?1006h",
+                4,
+            );
+        app.state.insert_test_runtime(second_pane, runtime);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Moved,
+            second_info.inner_rect.x + 2,
+            second_info.inner_rect.y + 3,
+        ));
+
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(second_pane));
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded mouse motion"),
+            Bytes::from_static(b"\x1b[<35;3;4M")
+        );
+        assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn moved_mouse_does_not_focus_from_sidebar_when_configured() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let first_pane = ws.tabs[0].root_pane;
+        let _second_pane = ws.test_split(Direction::Horizontal);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.focus_follows_mouse = true;
+        app.state.workspaces[0].tabs[0]
+            .layout
+            .focus_pane(first_pane);
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let sidebar = app.state.view.sidebar_rect;
+        assert!(sidebar.width > 0);
+
+        app.handle_mouse(mouse(MouseEventKind::Moved, sidebar.x, sidebar.y));
+
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(first_pane));
+    }
+
+    #[tokio::test]
     async fn mouse_dispatcher_does_not_forward_motion_behind_herdr_modes() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
-        let pane_id = ws.tabs[0].root_pane;
+        let first_pane = ws.tabs[0].root_pane;
+        let second_pane = ws.test_split(Direction::Horizontal);
         let (runtime, mut input_rx) =
             crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
                 80,
@@ -2072,14 +2186,25 @@ mod tests {
                 b"\x1b[?1003h\x1b[?1006h",
                 4,
             );
-        ws.insert_test_runtime(pane_id, runtime);
+        ws.insert_test_runtime(second_pane, runtime);
 
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
         app.state.selected = 0;
+        app.state.focus_follows_mouse = true;
+        app.state.workspaces[0].tabs[0]
+            .layout
+            .focus_pane(first_pane);
         app.state.mode = Mode::Navigate;
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let info = app.state.view.pane_infos[0].clone();
+        let info = app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == second_pane)
+            .expect("second pane info")
+            .clone();
 
         app.handle_mouse(mouse(
             MouseEventKind::Moved,
@@ -2088,6 +2213,7 @@ mod tests {
         ));
 
         assert!(input_rx.try_recv().is_err());
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(first_pane));
     }
 
     #[tokio::test]
@@ -2697,7 +2823,7 @@ mod tests {
     #[tokio::test]
     async fn keyboard_context_menu_split_keeps_new_runtime() {
         let mut app = app_for_mouse_test();
-        app.state.default_shell = "/usr/bin/true".into();
+        app.state.default_shell = "true".into();
         let (workspace, terminal, runtime) = Workspace::new(
             std::env::current_dir().unwrap_or_else(|_| "/".into()),
             24,

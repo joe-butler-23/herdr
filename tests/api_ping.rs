@@ -691,7 +691,7 @@ fn pane_info_reports_foreground_cwd_without_changing_pane_cwd() {
     let runtime_dir = base.join("runtime");
     let socket_path = runtime_dir.join("herdr.sock");
 
-    let child = spawn_herdr_with_shell(&config_home, &runtime_dir, &socket_path, "/bin/bash");
+    let child = spawn_herdr_with_shell(&config_home, &runtime_dir, &socket_path, "/bin/sh");
     wait_for_socket(&socket_path, Duration::from_secs(5));
 
     let created = send_request(

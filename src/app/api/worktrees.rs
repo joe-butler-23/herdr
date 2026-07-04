@@ -781,7 +781,7 @@ mod tests {
 
     #[cfg(not(windows))]
     fn test_shell() -> &'static str {
-        "/usr/bin/true"
+        "true"
     }
 
     fn app_with_parent(repo: &Path) -> App {

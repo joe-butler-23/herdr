@@ -786,6 +786,8 @@ pub struct UiConfig {
     pub mobile_width_threshold: u16,
     /// Capture mouse input for Herdr's mouse UI. Default: true.
     pub mouse_capture: bool,
+    /// Focus panes when the mouse moves over them. Default: false.
+    pub focus_follows_mouse: bool,
     /// Host cursor policy. Default: auto.
     pub host_cursor: HostCursorModeConfig,
     /// Modifier that lets right-click gestures pass through to pane apps. Empty disables it.
@@ -989,6 +991,7 @@ impl Default for UiConfig {
             sidebar_collapsed_mode: SidebarCollapsedModeConfig::Compact,
             mobile_width_threshold: DEFAULT_MOBILE_WIDTH_THRESHOLD,
             mouse_capture: true,
+            focus_follows_mouse: false,
             host_cursor: HostCursorModeConfig::Auto,
             right_click_passthrough_modifier: RightClickPassthroughModifierConfig::default(),
             redraw_on_focus_gained: true,
@@ -1378,6 +1381,19 @@ mouse_capture = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.mouse_capture);
+    }
+
+    #[test]
+    fn focus_follows_mouse_defaults_off_and_parses() {
+        let default_config = Config::default();
+        assert!(!default_config.ui.focus_follows_mouse);
+
+        let toml = r#"
+[ui]
+focus_follows_mouse = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.ui.focus_follows_mouse);
     }
 
     #[test]

@@ -1166,7 +1166,7 @@ pub(super) mod test_support {
         }
         #[cfg(not(windows))]
         {
-            "/usr/bin/true"
+            "true"
         }
     }
 

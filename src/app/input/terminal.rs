@@ -909,7 +909,7 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         );
-        app.state.default_shell = "/usr/bin/true".into();
+        app.state.default_shell = "true".into();
         let (workspace, terminal, runtime) = Workspace::new(
             std::env::current_dir().unwrap_or_else(|_| "/".into()),
             24,
