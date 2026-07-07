@@ -5,9 +5,9 @@ description: "Control herdr from inside it. Manage workspaces and tabs, split pa
 
 # herdr — agent skill
 
-before using this skill, check that `HERDR_ENV=1`. if it is not set to `1`, say you are not running inside a herdr-managed pane and stop. do not inspect or control the focused herdr pane from outside herdr.
+before using this skill, check that `HERDR_ENV=1`. if it is not set to `1`, then you are not running inside a herdr-managed pane and stop. that is fine, but it may impact your ability to test functionality.
 
-you are running inside herdr, a terminal-native agent multiplexer. herdr gives you workspaces, tabs, and panes — each pane is a real terminal with its own shell, agent, server, or log stream — and you can control all of it from the cli.
+if you are running inside herdr already, then herdr is a terminal-native agent multiplexer. herdr gives you workspaces, tabs, and panes — each pane is a real terminal with its own shell, agent, server, or log stream — and you can control all of it from the cli.
 
 this means you can:
 
