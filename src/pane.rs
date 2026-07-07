@@ -49,12 +49,38 @@ pub use self::{
 const RELEASE_REACQUIRE_SUPPRESSION: std::time::Duration = std::time::Duration::from_secs(1);
 const PANE_TERM: &str = "xterm-256color";
 const PANE_COLORTERM: &str = "truecolor";
+const HOST_TERMINAL_ENV_VARS: &[&str] = &[
+    "ALACRITTY_WINDOW_ID",
+    "TERMINFO",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "WEZTERM_PANE",
+];
+const HOST_TERMINAL_ENV_PREFIXES: &[&str] = &["KITTY_"];
+
+fn is_host_terminal_env_var(key: &str) -> bool {
+    HOST_TERMINAL_ENV_VARS.contains(&key)
+        || HOST_TERMINAL_ENV_PREFIXES
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+}
+
+fn scrub_host_terminal_env(cmd: &mut CommandBuilder) {
+    let keys: Vec<String> = cmd
+        .iter_full_env_as_str()
+        .filter(|(key, _)| is_host_terminal_env_var(key))
+        .map(|(key, _)| key.to_string())
+        .collect();
+    for key in keys {
+        cmd.env_remove(key);
+    }
+}
 
 fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // Each pane is rendered by herdr's own terminal layer, not the outer terminal
-    // that launched the app. Advertising the inherited TERM leaks the host terminal
-    // identity into shells and across SSH, which breaks redraw and cursor movement
-    // when the remote side lacks matching terminfo entries.
+    // that launched the app. Advertising the inherited terminal identity into
+    // shells and across SSH breaks redraw, cursor movement, and terminal queries.
+    scrub_host_terminal_env(cmd);
     cmd.env("TERM", PANE_TERM);
     cmd.env("COLORTERM", PANE_COLORTERM);
 }
@@ -2740,6 +2766,15 @@ mod tests {
 
     #[cfg(unix)]
     fn capture_shell_output(command: &str, extra_env: &[(&str, &str)]) -> String {
+        capture_shell_output_with_outer_env(command, &[], extra_env)
+    }
+
+    #[cfg(unix)]
+    fn capture_shell_output_with_outer_env(
+        command: &str,
+        outer_env: &[(&str, &str)],
+        extra_env: &[(&str, &str)],
+    ) -> String {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -2762,6 +2797,9 @@ mod tests {
         cmd.cwd(std::env::current_dir().unwrap());
         cmd.env("TERM", "xterm-ghostty");
         cmd.env("COLORTERM", "falsecolor");
+        for (key, value) in outer_env {
+            cmd.env(key, value);
+        }
         apply_pane_terminal_env(&mut cmd);
         for (key, value) in extra_env {
             cmd.env(key, value);
@@ -3058,12 +3096,58 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn pane_terminal_identity_scrubs_outer_terminal_env() {
+        let output = capture_shell_output_with_outer_env(
+            "printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \
+             \"$TERM\" \
+             \"$COLORTERM\" \
+             \"${TERMINFO-unset}\" \
+             \"${TERM_PROGRAM-unset}\" \
+             \"${TERM_PROGRAM_VERSION-unset}\" \
+             \"${WEZTERM_PANE-unset}\" \
+             \"${ALACRITTY_WINDOW_ID-unset}\" \
+             \"${KITTY_INSTALLATION_DIR-unset}\" \
+             \"${KITTY_LISTEN_ON-unset}\" \
+             \"${KITTY_PID-unset}\" \
+             \"${KITTY_PUBLIC_KEY-unset}\" \
+             \"${KITTY_WINDOW_ID-unset}\"",
+            &[
+                ("TERMINFO", "/outer/terminfo"),
+                ("TERM_PROGRAM", "WezTerm"),
+                ("TERM_PROGRAM_VERSION", "20260707"),
+                ("WEZTERM_PANE", "1"),
+                ("ALACRITTY_WINDOW_ID", "2"),
+                ("KITTY_INSTALLATION_DIR", "/outer/kitty"),
+                ("KITTY_LISTEN_ON", "unix:/outer/kitty"),
+                ("KITTY_PID", "3"),
+                ("KITTY_PUBLIC_KEY", "public"),
+                ("KITTY_WINDOW_ID", "4"),
+            ],
+            &[],
+        );
+        assert_eq!(
+            output,
+            "xterm-256color\ntruecolor\nunset\nunset\nunset\nunset\nunset\nunset\nunset\nunset\nunset\nunset\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn pane_terminal_identity_allows_explicit_override() {
         let output = capture_shell_output(
-            "printf '%s\\n%s\\n' \"$TERM\" \"$COLORTERM\"",
-            &[("TERM", "vt100"), ("COLORTERM", "24bit")],
+            "printf '%s\\n%s\\n%s\\n%s\\n' \
+             \"$TERM\" \
+             \"$COLORTERM\" \
+             \"${TERMINFO-unset}\" \
+             \"${KITTY_WINDOW_ID-unset}\"",
+            &[
+                ("TERM", "vt100"),
+                ("COLORTERM", "24bit"),
+                ("TERMINFO", "/explicit/terminfo"),
+                ("KITTY_WINDOW_ID", "explicit"),
+            ],
         );
-        assert_eq!(output, "vt100\n24bit\n");
+        assert_eq!(output, "vt100\n24bit\n/explicit/terminfo\nexplicit\n");
     }
 
     #[cfg(unix)]
