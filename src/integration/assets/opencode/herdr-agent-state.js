@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=opencode
-// HERDR_INTEGRATION_VERSION=8
+// HERDR_INTEGRATION_VERSION=9
 
 import net from "node:net";
 
@@ -106,7 +106,86 @@ function reportState(state, sessionID) {
   return request("pane.report_agent", params);
 }
 
-export const HerdrAgentStatePlugin = async () => {
+// Mail is additive, alongside session/state reporting, and only fires for
+// delegated workers: HERDR_PARENT_TERMINAL_ID (authoritative, resolved
+// server-side) falls back to HERDR_PARENT_PANE_ID (older spawner/display
+// only). Standalone (non-delegated) sessions have neither set, so they stay
+// silent by construction.
+function parentPaneId() {
+  return process.env.HERDR_PARENT_TERMINAL_ID || process.env.HERDR_PARENT_PANE_ID || undefined;
+}
+
+function sendMail(to, kind, body) {
+  const socketPath = process.env.HERDR_SOCKET_PATH;
+  if (!to || !socketPath || !body) {
+    return Promise.resolve();
+  }
+
+  const requestId = `${SOURCE}:mail:${Date.now()}:${Math.floor(Math.random() * 1_000_000)
+    .toString()
+    .padStart(6, "0")}`;
+  const subject = body.split("\n")[0].slice(0, 120) || "needs attention";
+  const request = {
+    id: requestId,
+    method: "mail.send",
+    params: {
+      to,
+      kind,
+      subject,
+      body,
+      from_pane_id: process.env.HERDR_PANE_ID,
+      from_agent: AGENT,
+    },
+  };
+
+  return new Promise((resolve) => {
+    const client = net.createConnection(socketPath, () => {
+      client.write(`${JSON.stringify(request)}\n`);
+    });
+
+    const finish = () => {
+      client.destroy();
+      resolve();
+    };
+
+    client.setTimeout(500, finish);
+    client.on("data", finish);
+    client.on("error", finish);
+    client.on("end", finish);
+    client.on("close", resolve);
+  });
+}
+
+// Fetch the final assistant message text for a session via the opencode SDK
+// client, so `session.idle` can attach a done-mail body without parsing any
+// transcript file. Best-effort: any SDK/shape surprise resolves to "" rather
+// than throwing, since mail must never break the existing report path.
+async function fetchLastAssistantMessage(client, sessionID) {
+  if (!client || !sessionID) {
+    return "";
+  }
+  try {
+    const response = await client.session.messages({ path: { id: sessionID } });
+    const messages = Array.isArray(response) ? response : response?.data;
+    if (!Array.isArray(messages)) {
+      return "";
+    }
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const entry = messages[index];
+      if (entry?.info?.role === "assistant") {
+        return (entry.parts ?? [])
+          .filter((part) => part?.type === "text")
+          .map((part) => part.text)
+          .join("");
+      }
+    }
+  } catch {
+    // best-effort only.
+  }
+  return "";
+}
+
+export const HerdrAgentStatePlugin = async ({ client } = {}) => {
   if (
     process.env.HERDR_ENV !== "1" ||
     !process.env.HERDR_SOCKET_PATH ||
@@ -146,6 +225,17 @@ export const HerdrAgentStatePlugin = async () => {
           case "question.rejected":
             await reportState("working");
             break;
+          case "permission.updated": {
+            // A sub-agent asking for permission is exactly the "worker needs
+            // an answer" signal an orchestrator wants surfaced, so blocked
+            // mail is allowed for child sessions too (unlike done-mail,
+            // which is root-only).
+            const to = parentPaneId();
+            if (to) {
+              await sendMail(to, "blocked", properties?.title || "needs attention");
+            }
+            break;
+          }
           default:
             break;
         }
@@ -184,9 +274,24 @@ export const HerdrAgentStatePlugin = async () => {
         case "session.error":
           await reportState("blocked", sessionID);
           break;
-        case "session.idle":
-          await reportState("idle", sessionID);
+        case "permission.updated": {
+          const blockedTo = parentPaneId();
+          if (blockedTo) {
+            await sendMail(blockedTo, "blocked", properties?.title || "needs attention");
+          }
           break;
+        }
+        case "session.idle": {
+          await reportState("idle", sessionID);
+          const doneTo = parentPaneId();
+          if (doneTo) {
+            const lastMessage = await fetchLastAssistantMessage(client, sessionID);
+            if (lastMessage) {
+              await sendMail(doneTo, "done", lastMessage);
+            }
+          }
+          break;
+        }
         case "session.deleted":
           break;
         default:

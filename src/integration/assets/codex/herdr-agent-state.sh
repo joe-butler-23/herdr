@@ -3,7 +3,7 @@
 # managed by herdr; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # HERDR_INTEGRATION_ID=codex
-# HERDR_INTEGRATION_VERSION=6
+# HERDR_INTEGRATION_VERSION=7
 
 set -eu
 
@@ -13,7 +13,7 @@ trap 'rm -f "$hook_input_file"' EXIT HUP INT TERM
 cat >"$hook_input_file" 2>/dev/null || true
 
 case "$action" in
-  session) ;;
+  session|mail-done|mail-blocked) ;;
   *) exit 0 ;;
 esac
 
@@ -49,7 +49,62 @@ if hook_input_file:
         hook_input = {}
 
 hook_event_name = str(hook_input.get("hook_event_name") or "")
-if hook_event_name and hook_event_name != "SessionStart":
+if action == "session" and hook_event_name and hook_event_name != "SessionStart":
+    raise SystemExit(0)
+
+if action in ("mail-done", "mail-blocked"):
+    # Mail is additive, alongside session reporting, and only fires for
+    # delegated workers: standalone (non-herdr-delegated) sessions never have
+    # a parent stamped, so they stay silent by construction.
+    parent_pane_id = os.environ.get("HERDR_PARENT_TERMINAL_ID") or os.environ.get(
+        "HERDR_PARENT_PANE_ID"
+    )
+    if not parent_pane_id:
+        raise SystemExit(0)
+    if action == "mail-done":
+        if hook_input.get("stop_hook_active"):
+            # This Stop fired because an earlier stop hook already continued
+            # the turn; it is not the genuine final stop, so don't emit a
+            # duplicate done-mail for the same logical turn.
+            raise SystemExit(0)
+        last_message = hook_input.get("last_assistant_message") or ""
+        mail_kind = "done"
+        mail_subject = (last_message.splitlines() or [""])[0][:120]
+        mail_body = last_message
+    else:
+        # PermissionRequest's payload carries tool_name/tool_input, not a
+        # free-text message field; build a best-effort human summary.
+        tool_name = hook_input.get("tool_name") or ""
+        notification_message = (
+            f"needs permission: {tool_name}" if tool_name else "needs permission"
+        )
+        mail_kind = "blocked"
+        mail_subject = notification_message[:120]
+        mail_body = notification_message
+    mail_request = {
+        "id": f"{source}:mail:{int(time.time() * 1000)}:{random.randrange(1_000_000):06d}",
+        "method": "mail.send",
+        "params": {
+            "to": parent_pane_id,
+            "kind": mail_kind,
+            "subject": mail_subject,
+            "body": mail_body,
+            "from_pane_id": pane_id,
+            "from_agent": "codex",
+        },
+    }
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(0.5)
+        client.connect(socket_path)
+        client.sendall((json.dumps(mail_request) + "\n").encode())
+        try:
+            client.recv(4096)
+        except Exception:
+            pass
+        client.close()
+    except Exception:
+        pass
     raise SystemExit(0)
 
 request_id = f"{source}:{int(time.time() * 1000)}:{random.randrange(1_000_000):06d}"

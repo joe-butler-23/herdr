@@ -791,13 +791,25 @@ fn install_claude_writes_hook_and_updates_settings() {
         .as_str()
         .unwrap()
         .contains(" session"));
+    assert_eq!(settings["hooks"]["Stop"][0]["matcher"], "*");
+    assert!(settings["hooks"]["Stop"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains(" mail-done"));
+    assert_eq!(
+        settings["hooks"]["Notification"][0]["matcher"],
+        "permission_prompt"
+    );
+    assert!(settings["hooks"]["Notification"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains(" mail-blocked"));
     assert!(settings["hooks"].get("UserPromptSubmit").is_none());
     assert!(settings["hooks"].get("PreToolUse").is_none());
     assert!(settings["hooks"].get("PermissionRequest").is_none());
     assert!(settings["hooks"].get("PostToolUse").is_none());
     assert!(settings["hooks"].get("PostToolUseFailure").is_none());
     assert!(settings["hooks"].get("SubagentStop").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
     assert!(settings["hooks"].get("SessionEnd").is_none());
 
     std::env::remove_var("HOME");
@@ -843,13 +855,17 @@ fn install_claude_is_idempotent_for_hook_entries() {
         settings["hooks"]["SessionStart"].as_array().unwrap().len(),
         1
     );
+    assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        settings["hooks"]["Notification"].as_array().unwrap().len(),
+        1
+    );
     assert!(settings["hooks"].get("UserPromptSubmit").is_none());
     assert!(settings["hooks"].get("PreToolUse").is_none());
     assert!(settings["hooks"].get("PermissionRequest").is_none());
     assert!(settings["hooks"].get("PostToolUse").is_none());
     assert!(settings["hooks"].get("PostToolUseFailure").is_none());
     assert!(settings["hooks"].get("SubagentStop").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
     assert!(settings["hooks"].get("SessionEnd").is_none());
 
     std::env::remove_var("HOME");
@@ -927,7 +943,10 @@ fn install_claude_removes_deprecated_completion_hooks_and_preserves_user_hooks()
     );
     assert!(settings["hooks"].get("UserPromptSubmit").is_none());
     assert!(settings["hooks"].get("PreToolUse").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
+    assert!(settings["hooks"]["Stop"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains(" mail-done"));
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -956,7 +975,7 @@ fn claude_v1_integration_status_is_outdated() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(1));
-    assert_eq!(claude.expected_version, 7);
+    assert_eq!(claude.expected_version, 8);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -986,7 +1005,7 @@ fn claude_v2_integration_status_is_outdated() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(2));
-    assert_eq!(claude.expected_version, 7);
+    assert_eq!(claude.expected_version, 8);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1119,7 +1138,7 @@ fn codex_v2_integration_status_is_outdated() {
 
     assert_eq!(codex.path, hook_path);
     assert_eq!(codex.installed_version, Some(2));
-    assert_eq!(codex.expected_version, 6);
+    assert_eq!(codex.expected_version, 7);
     assert_eq!(codex.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1150,10 +1169,18 @@ fn install_codex_writes_hook_and_updates_hooks_and_config() {
         .as_str()
         .unwrap()
         .contains(" session"));
+    assert!(hooks["hooks"]["Stop"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains(" mail-done"));
+    assert!(
+        hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains(" mail-blocked")
+    );
     assert!(hooks["hooks"].get("UserPromptSubmit").is_none());
     assert!(hooks["hooks"].get("PreToolUse").is_none());
-    assert!(hooks["hooks"].get("PermissionRequest").is_none());
-    assert!(hooks["hooks"].get("Stop").is_none());
     assert!(config.contains("model = \"gpt-5.4\""));
     assert!(config.contains("[features]"));
     assert!(config.contains("hooks = true"));
@@ -1204,10 +1231,16 @@ fn install_codex_is_idempotent_for_hook_entries_and_feature_flag() {
     let config = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
 
     assert_eq!(hooks["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        hooks["hooks"]["PermissionRequest"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(hooks["hooks"].get("UserPromptSubmit").is_none());
     assert!(hooks["hooks"].get("PreToolUse").is_none());
-    assert!(hooks["hooks"].get("PermissionRequest").is_none());
-    assert!(hooks["hooks"].get("Stop").is_none());
     assert_eq!(config.matches("hooks = true").count(), 1);
     assert!(!config.contains("codex_hooks"));
     assert!(config.contains("other = true"));
@@ -2518,6 +2551,11 @@ fn bundled_integration_assets_report_session_refs() {
     );
     assert!(!CLAUDE_HOOK_ASSET.contains("\"state\": action"));
     assert!(!CLAUDE_HOOK_ASSET.contains("pane.release_agent"));
+    assert!(CLAUDE_HOOK_ASSET.contains("mail-done"));
+    assert!(CLAUDE_HOOK_ASSET.contains("mail-blocked"));
+    assert!(CLAUDE_HOOK_ASSET.contains("mail.send") || CLAUDE_HOOK_ASSET.contains("--body-stdin"));
+    assert!(CLAUDE_HOOK_ASSET.contains("HERDR_PARENT_TERMINAL_ID"));
+    assert!(CLAUDE_HOOK_ASSET.contains("last_assistant_message"));
     assert!(
         CODEX_HOOK_ASSET.contains("HERDR_HOOK_INPUT_FILE")
             || CODEX_HOOK_ASSET.contains("In.ReadToEnd")
@@ -2536,6 +2574,11 @@ fn bundled_integration_assets_report_session_refs() {
     );
     assert!(!CODEX_HOOK_ASSET.contains("\"state\": action"));
     assert!(!CODEX_HOOK_ASSET.contains("pane.release_agent"));
+    assert!(CODEX_HOOK_ASSET.contains("mail-done"));
+    assert!(CODEX_HOOK_ASSET.contains("mail-blocked"));
+    assert!(CODEX_HOOK_ASSET.contains("mail.send") || CODEX_HOOK_ASSET.contains("--body-stdin"));
+    assert!(CODEX_HOOK_ASSET.contains("HERDR_PARENT_TERMINAL_ID"));
+    assert!(CODEX_HOOK_ASSET.contains("last_assistant_message"));
     assert!(KIMI_HOOK_ASSET.contains("source = \"herdr:kimi\""));
     assert!(KIMI_HOOK_ASSET.contains("agent_session_id"));
     assert!(KIMI_HOOK_ASSET.contains("pane.report_agent_session"));
@@ -2560,6 +2603,10 @@ fn bundled_integration_assets_report_session_refs() {
     assert!(OPENCODE_PLUGIN_ASSET.contains("pane.report_agent_session"));
     assert!(OPENCODE_PLUGIN_ASSET.contains("reportState"));
     assert!(!OPENCODE_PLUGIN_ASSET.contains("pane.release_agent"));
+    assert!(OPENCODE_PLUGIN_ASSET.contains("mail.send"));
+    assert!(OPENCODE_PLUGIN_ASSET.contains("HERDR_PARENT_TERMINAL_ID"));
+    assert!(OPENCODE_PLUGIN_ASSET.contains("permission.updated"));
+    assert!(OPENCODE_PLUGIN_ASSET.contains("async ({ client }"));
     assert!(KILO_PLUGIN_ASSET.contains("SOURCE = \"herdr:kilo\""));
     assert!(KILO_PLUGIN_ASSET.contains("AGENT = \"kilo\""));
     assert!(KILO_PLUGIN_ASSET.contains("pane.report_agent_session"));
