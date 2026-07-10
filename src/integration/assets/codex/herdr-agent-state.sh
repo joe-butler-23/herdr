@@ -3,7 +3,7 @@
 # managed by herdr; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # HERDR_INTEGRATION_ID=codex
-# HERDR_INTEGRATION_VERSION=7
+# HERDR_INTEGRATION_VERSION=8
 
 set -eu
 
@@ -69,8 +69,15 @@ if action in ("mail-done", "mail-blocked"):
             raise SystemExit(0)
         last_message = hook_input.get("last_assistant_message") or ""
         mail_kind = "done"
-        mail_subject = (last_message.splitlines() or [""])[0][:120]
-        mail_body = last_message
+        if last_message:
+            mail_subject = (last_message.splitlines() or [""])[0][:120]
+            mail_body = last_message
+        else:
+            # A turn that emitted no assistant text (e.g. a tool-only turn)
+            # would otherwise produce a zero-information envelope: empty
+            # subject and body_bytes 0. Say so explicitly instead.
+            mail_subject = "done (no message)"
+            mail_body = ""
     else:
         # PermissionRequest's payload carries tool_name/tool_input, not a
         # free-text message field; build a best-effort human summary.

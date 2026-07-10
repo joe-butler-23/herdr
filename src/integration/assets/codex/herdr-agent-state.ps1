@@ -2,7 +2,7 @@
 # managed by herdr; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # HERDR_INTEGRATION_ID=codex
-# HERDR_INTEGRATION_VERSION=7
+# HERDR_INTEGRATION_VERSION=8
 
 param([string]$Action = "")
 
@@ -26,7 +26,15 @@ if ($Action -eq "mail-done" -or $Action -eq "mail-blocked") {
         if ($payload.stop_hook_active) { exit 0 }
         $mailBody = "$($payload.last_assistant_message)"
         $mailKind = "done"
-        $mailSubject = ($mailBody -split "`n")[0]
+        if ([string]::IsNullOrWhiteSpace($mailBody)) {
+            # A turn that emitted no assistant text (e.g. a tool-only turn)
+            # would otherwise produce a zero-information envelope: empty
+            # subject and body_bytes 0. Say so explicitly instead.
+            $mailBody = ""
+            $mailSubject = "done (no message)"
+        } else {
+            $mailSubject = ($mailBody -split "`n")[0]
+        }
     } else {
         # PermissionRequest's payload carries tool_name/tool_input, not a
         # free-text message field; build a best-effort human summary.
