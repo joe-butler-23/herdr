@@ -1,0 +1,728 @@
+#!/usr/bin/env python3
+"""mail-token-report -- token-usage measurement for herdr delegation A/B runs.
+
+WHY
+    You are comparing herdr delegation workflows (mail+nudge vs old
+    pane-polling; different orchestrator agents/models) and want to know
+    whether token use actually drops. This tool answers two questions:
+
+    1. `sessions`  -- worker-side session cost: total input/output/cache
+       tokens per agent session (Claude Code, Codex, opencode).
+    2. `context`   -- orchestrator-side cost: how many bytes of tool_result
+       content came back from each class of herdr command (mail wait/read/
+       list/send, pane read/list, wait agent-status, agent start, other
+       herdr calls, non-herdr calls) in one Claude Code transcript. This is
+       "what did coordination cost my context."
+    3. `compare`   -- runs `context` on transcript A and B (an A/B pair for
+       the same task under two workflows) and prints the deltas.
+
+USAGE
+    mail-token-report sessions [--since ISO8601] [--today] [--agent claude|codex|opencode] [--json]
+    mail-token-report context <transcript.jsonl> [--json]
+    mail-token-report compare <transcript-A.jsonl> <transcript-B.jsonl> [--json]
+
+DATA SOURCES (see final report / --help for exact field paths)
+    - Claude Code: ~/.claude/projects/<project-slug>/<session-id>.jsonl
+    - Codex:       ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+    - opencode:    ~/.local/share/opencode/opencode.db (sqlite3, read-only)
+
+EXIT CODES
+    0  ran to completion (even if some inputs were unreadable/skipped --
+       skip counts are reported, not treated as fatal)
+    1  the specific file/target named on the command line could not be
+       read at all (e.g. `context` given a missing path)
+
+No third-party dependencies. Stdlib only (argparse, json, sqlite3, re,
+glob, datetime).
+"""
+
+import argparse
+import glob
+import json
+import os
+import re
+import sqlite3
+import sys
+from datetime import datetime, timezone
+
+CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
+CODEX_SESSIONS_DIR = os.path.expanduser("~/.codex/sessions")
+OPENCODE_DB = os.path.expanduser("~/.local/share/opencode/opencode.db")
+
+CLASS_ORDER = [
+    "mail_wait",
+    "mail_read",
+    "mail_list",
+    "mail_send",
+    "pane_read",
+    "pane_list",
+    "wait_agent_status",
+    "agent_start",
+    "other_herdr",
+    "non_herdr",
+]
+
+CLASS_LABEL = {
+    "mail_wait": "mail wait",
+    "mail_read": "mail read",
+    "mail_list": "mail list",
+    "mail_send": "mail send",
+    "pane_read": "pane read",
+    "pane_list": "pane list",
+    "wait_agent_status": "wait agent-status",
+    "agent_start": "agent start",
+    "other_herdr": "other-herdr",
+    "non_herdr": "non-herdr",
+}
+
+# Order matters: most specific patterns first.
+CLASS_PATTERNS = [
+    ("mail_wait", re.compile(r"\bherdr\s+mail\s+wait\b")),
+    ("mail_read", re.compile(r"\bherdr\s+mail\s+read\b")),
+    ("mail_list", re.compile(r"\bherdr\s+mail\s+list\b")),
+    ("mail_send", re.compile(r"\bherdr\s+mail\s+send\b")),
+    ("pane_read", re.compile(r"\bherdr\s+pane\s+read\b")),
+    ("pane_list", re.compile(r"\bherdr\s+pane\s+list\b")),
+    ("wait_agent_status", re.compile(r"\bherdr\s+wait\s+agent-status\b")),
+    ("agent_start", re.compile(r"\bherdr\s+agent\s+start\b")),
+]
+HERDR_ANY = re.compile(r"\bherdr\b")
+
+
+def classify_command(command):
+    """Classify a shell command string into one of CLASS_ORDER."""
+    if not command:
+        return "non_herdr"
+    for cls, pat in CLASS_PATTERNS:
+        if pat.search(command):
+            return cls
+    if HERDR_ANY.search(command):
+        return "other_herdr"
+    return "non_herdr"
+
+
+def eprint(*a, **kw):
+    kw.setdefault("file", sys.stderr)
+    print(*a, **kw)
+
+
+def parse_iso(ts):
+    """Parse an ISO8601 timestamp (with or without trailing Z) to an aware
+    UTC datetime. Returns None on failure."""
+    if not ts:
+        return None
+    try:
+        s = ts.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def fmt_ts(dt):
+    if dt is None:
+        return "unknown"
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def content_bytes(content):
+    """Byte length (utf-8) of a tool_result content payload, whether it is
+    a plain string or a list of content blocks."""
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return len(content.encode("utf-8", errors="replace"))
+    if isinstance(content, list):
+        total = 0
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                total += len(item["text"].encode("utf-8", errors="replace"))
+            else:
+                try:
+                    total += len(json.dumps(item).encode("utf-8", errors="replace"))
+                except (TypeError, ValueError):
+                    total += len(str(item).encode("utf-8", errors="replace"))
+        return total
+    try:
+        return len(json.dumps(content).encode("utf-8", errors="replace"))
+    except (TypeError, ValueError):
+        return len(str(content).encode("utf-8", errors="replace"))
+
+
+# --------------------------------------------------------------------------
+# Measurement 1: per-session worker-side token cost
+# --------------------------------------------------------------------------
+
+def find_claude_transcripts():
+    if not os.path.isdir(CLAUDE_PROJECTS_DIR):
+        return []
+    return sorted(glob.glob(os.path.join(CLAUDE_PROJECTS_DIR, "*", "*.jsonl")))
+
+
+def parse_claude_session(path):
+    """Sum usage across assistant-message lines in one Claude Code
+    transcript (~/.claude/projects/<slug>/<session-id>.jsonl).
+
+    Field path evidence (real file, 2026-07-10):
+      message.usage.input_tokens
+      message.usage.output_tokens
+      message.usage.cache_read_input_tokens
+      message.usage.cache_creation_input_tokens
+    """
+    session_id = os.path.splitext(os.path.basename(path))[0]
+    project = os.path.basename(os.path.dirname(path))
+    start = None
+    input_tokens = 0
+    output_tokens = 0
+    cache_read = 0
+    cache_creation = 0
+    skipped = 0
+    saw_usage = False
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    skipped += 1
+                    continue
+                if start is None:
+                    ts = parse_iso(rec.get("timestamp"))
+                    if ts is not None:
+                        start = ts
+                msg = rec.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                usage = msg.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                saw_usage = True
+                input_tokens += int(usage.get("input_tokens") or 0)
+                output_tokens += int(usage.get("output_tokens") or 0)
+                cache_read += int(usage.get("cache_read_input_tokens") or 0)
+                cache_creation += int(usage.get("cache_creation_input_tokens") or 0)
+    except OSError as e:
+        eprint(f"mail-token-report: cannot read {path}: {e}")
+        return None
+
+    if not saw_usage:
+        return None
+
+    total = input_tokens + output_tokens + cache_read + cache_creation
+    return {
+        "agent": "claude",
+        "session_id": session_id,
+        "project": project,
+        "start": start,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read,
+        "cache_creation_tokens": cache_creation,
+        "total_tokens": total,
+        "skipped_lines": skipped,
+        "path": path,
+    }
+
+
+def find_codex_rollouts():
+    if not os.path.isdir(CODEX_SESSIONS_DIR):
+        return []
+    return sorted(glob.glob(os.path.join(CODEX_SESSIONS_DIR, "**", "*.jsonl"), recursive=True))
+
+
+def parse_codex_session(path):
+    """Extract token usage from one Codex rollout file
+    (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
+
+    Field path evidence (real file, 2026-07-10):
+      type == "session_meta" -> payload.id, payload.cwd, payload.timestamp
+      type == "event_msg", payload.type == "token_count" ->
+        payload.info.total_token_usage.{input_tokens,cached_input_tokens,
+        output_tokens,reasoning_output_tokens,total_tokens}
+      This total_token_usage is CUMULATIVE for the session (monotonically
+      non-decreasing), so we take the MAX observed total_tokens rather than
+      summing across events, and read the paired fields from that same
+      event.
+
+      IMPORTANT: payload.session_id is NOT a unique per-file id. For
+      subagent/delegated threads (payload.thread_source == "subagent",
+      seen on today's herdr/codex delegation test sessions) session_id
+      holds the PARENT thread's id, shared by every subagent spawned from
+      it, while payload.id is the unique id of *this* rollout file/thread.
+      For top-level user sessions id == session_id. We key sessions on
+      payload.id (falling back to session_id, then the filename) and keep
+      the parent id only as extra metadata, so delegated worker threads
+      are not silently collapsed into one row.
+    """
+    session_id = None
+    parent_thread_id = None
+    project = None
+    start = None
+    skipped = 0
+    best = None  # dict with total_tokens max
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    skipped += 1
+                    continue
+                rtype = rec.get("type")
+                payload = rec.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if rtype == "session_meta":
+                    session_id = payload.get("id") or payload.get("session_id") or session_id
+                    parent_thread_id = payload.get("session_id")
+                    project = payload.get("cwd") or project
+                    ts = parse_iso(payload.get("timestamp") or rec.get("timestamp"))
+                    if ts is not None and start is None:
+                        start = ts
+                elif rtype == "event_msg" and payload.get("type") == "token_count":
+                    info = payload.get("info")
+                    if not isinstance(info, dict):
+                        continue
+                    usage = info.get("total_token_usage")
+                    if not isinstance(usage, dict):
+                        continue
+                    total = int(usage.get("total_tokens") or 0)
+                    if best is None or total > best["total_tokens"]:
+                        best = {
+                            "input_tokens": int(usage.get("input_tokens") or 0),
+                            "cached_input_tokens": int(usage.get("cached_input_tokens") or 0),
+                            "output_tokens": int(usage.get("output_tokens") or 0),
+                            "total_tokens": total,
+                        }
+                    if start is None:
+                        ts = parse_iso(rec.get("timestamp"))
+                        if ts is not None:
+                            start = ts
+    except OSError as e:
+        eprint(f"mail-token-report: cannot read {path}: {e}")
+        return None
+
+    if best is None:
+        return None
+    if session_id is None:
+        session_id = os.path.splitext(os.path.basename(path))[0]
+
+    fresh_input = max(best["input_tokens"] - best["cached_input_tokens"], 0)
+    return {
+        "agent": "codex",
+        "session_id": session_id,
+        "parent_thread_id": parent_thread_id if parent_thread_id != session_id else None,
+        "project": project or "unknown",
+        "start": start,
+        "input_tokens": fresh_input,
+        "output_tokens": best["output_tokens"],
+        "cache_read_tokens": best["cached_input_tokens"],
+        "cache_creation_tokens": 0,
+        "total_tokens": best["total_tokens"],
+        "skipped_lines": skipped,
+        "path": path,
+    }
+
+
+def opencode_sessions():
+    """Read per-session usage from opencode's sqlite store.
+
+    Field path evidence (real db, 2026-07-10):
+      table `session` columns: id, directory, model (json text), time_created,
+      tokens_input, tokens_output, tokens_cache_read, tokens_cache_write.
+      This is genuinely tracked (not "unavailable") on this machine's
+      opencode install.
+    """
+    if not os.path.exists(OPENCODE_DB):
+        return [], "opencode.db not found at %s" % OPENCODE_DB
+    try:
+        uri = "file:%s?mode=ro" % OPENCODE_DB
+        con = sqlite3.connect(uri, uri=True, timeout=5)
+    except sqlite3.Error as e:
+        return [], f"cannot open opencode.db read-only: {e}"
+
+    rows = []
+    err = None
+    try:
+        cur = con.cursor()
+        cur.execute(
+            "select id, directory, model, time_created, tokens_input, "
+            "tokens_output, tokens_cache_read, tokens_cache_write "
+            "from session"
+        )
+        for r in cur.fetchall():
+            sid, directory, model_json, time_created, tin, tout, tcread, tcwrite = r
+            start = None
+            if time_created:
+                try:
+                    ms = float(time_created)
+                    if ms > 1e12:
+                        ms /= 1000.0
+                    start = datetime.fromtimestamp(ms, tz=timezone.utc)
+                except (ValueError, OSError, OverflowError):
+                    start = None
+            model_id = None
+            if model_json:
+                try:
+                    model_id = json.loads(model_json).get("id")
+                except (json.JSONDecodeError, ValueError, AttributeError):
+                    model_id = None
+            input_tokens = int(tin or 0)
+            output_tokens = int(tout or 0)
+            cache_read = int(tcread or 0)
+            cache_write = int(tcwrite or 0)
+            rows.append({
+                "agent": "opencode",
+                "session_id": sid,
+                "project": directory or "unknown",
+                "model": model_id,
+                "start": start,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_read_tokens": cache_read,
+                "cache_creation_tokens": cache_write,
+                "total_tokens": input_tokens + output_tokens + cache_read + cache_write,
+                "skipped_lines": 0,
+                "path": OPENCODE_DB,
+            })
+    except sqlite3.Error as e:
+        err = f"error reading opencode.db: {e}"
+    finally:
+        con.close()
+    return rows, err
+
+
+def collect_sessions(agent_filter, since_dt):
+    rows = []
+    skipped_files = {"claude": 0, "codex": 0, "opencode": 0}
+    notes = []
+
+    if agent_filter in (None, "claude"):
+        for path in find_claude_transcripts():
+            rec = parse_claude_session(path)
+            if rec is None:
+                skipped_files["claude"] += 1
+                continue
+            rows.append(rec)
+
+    if agent_filter in (None, "codex"):
+        for path in find_codex_rollouts():
+            rec = parse_codex_session(path)
+            if rec is None:
+                skipped_files["codex"] += 1
+                continue
+            rows.append(rec)
+
+    if agent_filter in (None, "opencode"):
+        oc_rows, oc_err = opencode_sessions()
+        rows.extend(oc_rows)
+        if oc_err:
+            notes.append(oc_err)
+
+    if since_dt is not None:
+        rows = [r for r in rows if r["start"] is not None and r["start"] >= since_dt]
+
+    rows.sort(key=lambda r: (r["start"] is None, r["start"] or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+    return rows, skipped_files, notes
+
+
+# --------------------------------------------------------------------------
+# Measurement 2: orchestrator-side context ingestion by command class
+# --------------------------------------------------------------------------
+
+def analyze_context(path):
+    """Parse one Claude Code transcript and attribute tool_result byte
+    sizes to the Bash command that produced them.
+
+    Field path evidence (real file, 2026-07-10):
+      assistant message.content[] item {type: "tool_use", name: "Bash",
+        id, input: {command: "..."}}
+      user message.content[] item {type: "tool_result", tool_use_id, content}
+      tool_result.content is either a plain string or a list of blocks
+      (commonly [{"type": "text", "text": "..."}]).
+    """
+    tool_commands = {}   # tool_use_id -> (name, command or None)
+    classes = {c: {"count": 0, "bytes": 0} for c in CLASS_ORDER}
+    non_bash_bytes = 0
+    non_bash_count = 0
+    unmatched_bytes = 0
+    unmatched_count = 0
+    skipped = 0
+    total_lines = 0
+
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            total_lines += 1
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                skipped += 1
+                continue
+            msg = rec.get("message")
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "tool_use":
+                    tid = block.get("id")
+                    name = block.get("name")
+                    command = None
+                    if name == "Bash":
+                        inp = block.get("input")
+                        if isinstance(inp, dict):
+                            command = inp.get("command")
+                    if tid:
+                        tool_commands[tid] = (name, command)
+                elif btype == "tool_result":
+                    tid = block.get("tool_use_id")
+                    nbytes = content_bytes(block.get("content"))
+                    origin = tool_commands.get(tid)
+                    if origin is None:
+                        unmatched_bytes += nbytes
+                        unmatched_count += 1
+                        continue
+                    name, command = origin
+                    if name != "Bash":
+                        non_bash_bytes += nbytes
+                        non_bash_count += 1
+                        continue
+                    cls = classify_command(command)
+                    classes[cls]["count"] += 1
+                    classes[cls]["bytes"] += nbytes
+
+    total_bytes = sum(c["bytes"] for c in classes.values()) + non_bash_bytes + unmatched_bytes
+    return {
+        "path": path,
+        "classes": classes,
+        "non_bash_tool": {"count": non_bash_count, "bytes": non_bash_bytes},
+        "unmatched": {"count": unmatched_count, "bytes": unmatched_bytes},
+        "total_bytes": total_bytes,
+        "skipped_lines": skipped,
+        "total_lines": total_lines,
+    }
+
+
+# --------------------------------------------------------------------------
+# Rendering
+# --------------------------------------------------------------------------
+
+def render_table(headers, rows):
+    """rows: list of list[str]. Returns plain-text aligned table."""
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+    lines = []
+    header_line = "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
+    lines.append(header_line)
+    lines.append("  ".join("-" * widths[i] for i in range(len(headers))))
+    for row in rows:
+        lines.append("  ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row)))
+    return "\n".join(lines)
+
+
+def cmd_sessions(args):
+    since_dt = None
+    if args.today:
+        now = datetime.now(timezone.utc)
+        since_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if args.since:
+        since_dt = parse_iso(args.since)
+        if since_dt is None:
+            eprint(f"mail-token-report: cannot parse --since value: {args.since}")
+            return 1
+
+    rows, skipped_files, notes = collect_sessions(args.agent, since_dt)
+
+    if args.json:
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["start"] = fmt_ts(r["start"]) if r["start"] else None
+            out.append(d)
+        print(json.dumps({
+            "sessions": out,
+            "unreadable_files_skipped": skipped_files,
+            "notes": notes,
+        }, indent=2))
+        return 0
+
+    table_rows = []
+    for r in rows:
+        table_rows.append([
+            r["session_id"][:12],
+            r["agent"],
+            fmt_ts(r["start"]),
+            str(r["input_tokens"]),
+            str(r["output_tokens"]),
+            str(r["cache_read_tokens"]),
+            str(r["total_tokens"]),
+            r.get("project", ""),
+        ])
+    headers = ["session", "agent", "start", "input", "output", "cache_read", "total", "project"]
+    print(render_table(headers, table_rows))
+    print()
+    print(f"sessions: {len(rows)}")
+    for agent, n in skipped_files.items():
+        if n:
+            print(f"skipped unreadable/no-usage {agent} files: {n}")
+    for note in notes:
+        print(f"note: {note}")
+    return 0
+
+
+def print_context_report(result, label, json_mode):
+    if json_mode:
+        return result
+    print(f"=== {label}: {result['path']} ===")
+    rows = []
+    total = result["total_bytes"] or 1
+    for cls in CLASS_ORDER:
+        c = result["classes"][cls]
+        share = 100.0 * c["bytes"] / total
+        rows.append([CLASS_LABEL[cls], str(c["count"]), str(c["bytes"]), f"{share:.1f}%"])
+    nb = result["non_bash_tool"]
+    rows.append(["non-bash-tool (info)", str(nb["count"]), str(nb["bytes"]),
+                 f"{100.0 * nb['bytes'] / total:.1f}%"])
+    um = result["unmatched"]
+    if um["count"]:
+        rows.append(["unmatched tool_result", str(um["count"]), str(um["bytes"]),
+                     f"{100.0 * um['bytes'] / total:.1f}%"])
+    headers = ["class", "calls", "bytes", "share of all tool-result bytes"]
+    print(render_table(headers, rows))
+    print()
+    print(f"total tool-result bytes (all tools): {result['total_bytes']}")
+    print(f"lines parsed: {result['total_lines']}, skipped (unparseable): {result['skipped_lines']}")
+    print()
+    return None
+
+
+def cmd_context(args):
+    if not os.path.isfile(args.transcript):
+        eprint(f"mail-token-report: cannot read {args.transcript}: not a file")
+        return 1
+    try:
+        result = analyze_context(args.transcript)
+    except OSError as e:
+        eprint(f"mail-token-report: cannot read {args.transcript}: {e}")
+        return 1
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    print_context_report(result, "context", False)
+    return 0
+
+
+def cmd_compare(args):
+    for p in (args.transcript_a, args.transcript_b):
+        if not os.path.isfile(p):
+            eprint(f"mail-token-report: cannot read {p}: not a file")
+            return 1
+    try:
+        result_a = analyze_context(args.transcript_a)
+        result_b = analyze_context(args.transcript_b)
+    except OSError as e:
+        eprint(f"mail-token-report: cannot read input: {e}")
+        return 1
+
+    if args.json:
+        deltas = {}
+        for cls in CLASS_ORDER:
+            a = result_a["classes"][cls]
+            b = result_b["classes"][cls]
+            deltas[cls] = {
+                "bytes_a": a["bytes"],
+                "bytes_b": b["bytes"],
+                "delta_bytes": b["bytes"] - a["bytes"],
+                "calls_a": a["count"],
+                "calls_b": b["count"],
+            }
+        print(json.dumps({
+            "a": result_a,
+            "b": result_b,
+            "deltas": deltas,
+            "total_delta_bytes": result_b["total_bytes"] - result_a["total_bytes"],
+        }, indent=2))
+        return 0
+
+    print_context_report(result_a, "A", False)
+    print_context_report(result_b, "B", False)
+
+    rows = []
+    for cls in CLASS_ORDER:
+        a = result_a["classes"][cls]
+        b = result_b["classes"][cls]
+        delta = b["bytes"] - a["bytes"]
+        pct = (100.0 * delta / a["bytes"]) if a["bytes"] else (float("inf") if b["bytes"] else 0.0)
+        pct_s = f"{pct:+.1f}%" if pct != float("inf") else "n/a"
+        rows.append([CLASS_LABEL[cls], str(a["bytes"]), str(b["bytes"]), f"{delta:+d}", pct_s])
+    headers = ["class", "bytes A", "bytes B", "delta bytes", "delta %"]
+    print("=== delta (B - A) ===")
+    print(render_table(headers, rows))
+    print()
+    total_delta = result_b["total_bytes"] - result_a["total_bytes"]
+    print(f"total tool-result bytes: A={result_a['total_bytes']} B={result_b['total_bytes']} delta={total_delta:+d}")
+    return 0
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="mail-token-report",
+        description="Token-usage measurement for herdr delegation A/B runs.",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp_sessions = sub.add_parser("sessions", help="Per-session worker-side token cost (Claude/Codex/opencode).")
+    sp_sessions.add_argument("--since", help="ISO8601 timestamp; only sessions starting at/after this time.")
+    sp_sessions.add_argument("--today", action="store_true", help="Only sessions starting today (UTC).")
+    sp_sessions.add_argument("--agent", choices=["claude", "codex", "opencode"], default=None,
+                              help="Restrict to one agent's sessions.")
+    sp_sessions.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
+    sp_sessions.set_defaults(func=cmd_sessions)
+
+    sp_context = sub.add_parser("context", help="Per-command-class tool_result byte attribution for one Claude transcript.")
+    sp_context.add_argument("transcript", help="Path to a Claude Code transcript .jsonl file.")
+    sp_context.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
+    sp_context.set_defaults(func=cmd_context)
+
+    sp_compare = sub.add_parser("compare", help="context for two transcripts (A/B run) plus deltas.")
+    sp_compare.add_argument("transcript_a", help="Path to transcript A (.jsonl).")
+    sp_compare.add_argument("transcript_b", help="Path to transcript B (.jsonl).")
+    sp_compare.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
+    sp_compare.set_defaults(func=cmd_compare)
+
+    return p
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except Exception as e:  # defensive: never crash uncaught
+        eprint(f"mail-token-report: unexpected error: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
