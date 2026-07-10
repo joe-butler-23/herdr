@@ -31,13 +31,14 @@ enum BodySource {
 
 fn mail_send(args: &[String]) -> std::io::Result<i32> {
     let Some(to) = args.first() else {
-        eprintln!("usage: herdr mail send <to> --kind done|blocked|question|info --subject S [--body TEXT | --body-file PATH | --body-stdin]");
+        eprintln!("usage: herdr mail send <to> --kind done|blocked|question|info --subject S [--body TEXT | --body-file PATH | --body-stdin] [--no-nudge]");
         return Ok(2);
     };
 
     let mut kind = None;
     let mut subject = None;
     let mut body_source = None;
+    let mut no_nudge = false;
 
     let mut index = 1;
     while index < args.len() {
@@ -94,6 +95,10 @@ fn mail_send(args: &[String]) -> std::io::Result<i32> {
                     return Ok(2);
                 }
                 body_source = Some(BodySource::Stdin);
+                index += 1;
+            }
+            "--no-nudge" => {
+                no_nudge = true;
                 index += 1;
             }
             "help" | "--help" | "-h" => {
@@ -159,14 +164,18 @@ fn mail_send(args: &[String]) -> std::io::Result<i32> {
             body,
             from_pane_id,
             from_agent: None,
+            no_nudge,
         }),
     })?)
 }
+
+const MAIL_WAIT_USAGE: &str = "usage: herdr mail wait [--timeout MS] [--inbox X] [--from SENDER] [--consume]\n  wait does NOT mark the matched message read by default: a re-armed wait\n  re-returns the SAME message until it is marked read (via 'herdr mail read'\n  or this call's --consume flag, which atomically marks it read before\n  returning it)";
 
 fn mail_wait(args: &[String]) -> std::io::Result<i32> {
     let mut timeout_ms = None;
     let mut inbox = None;
     let mut sender = None;
+    let mut consume = false;
 
     let mut index = 0;
     while index < args.len() {
@@ -195,8 +204,12 @@ fn mail_wait(args: &[String]) -> std::io::Result<i32> {
                 sender = Some(value.clone());
                 index += 2;
             }
+            "--consume" => {
+                consume = true;
+                index += 1;
+            }
             "help" | "--help" | "-h" => {
-                eprintln!("usage: herdr mail wait [--timeout MS] [--inbox X] [--from SENDER]");
+                eprintln!("{MAIL_WAIT_USAGE}");
                 return Ok(0);
             }
             other => {
@@ -217,6 +230,7 @@ fn mail_wait(args: &[String]) -> std::io::Result<i32> {
             inbox,
             sender,
             timeout_ms,
+            consume,
         }),
     })?)
 }
@@ -342,13 +356,17 @@ fn parse_mail_kind(value: &str) -> Result<MailKind, String> {
 
 fn print_mail_help() {
     eprintln!("herdr mail commands:");
-    eprintln!("  herdr mail send <to> --kind done|blocked|question|info --subject S [--body TEXT | --body-file PATH | --body-stdin]");
-    eprintln!("  herdr mail wait [--timeout MS] [--inbox X] [--from SENDER]");
+    eprintln!("  herdr mail send <to> --kind done|blocked|question|info --subject S [--body TEXT | --body-file PATH | --body-stdin] [--no-nudge]");
+    eprintln!("  {MAIL_WAIT_USAGE}");
     eprintln!("  herdr mail read <id> [--inbox X]");
     eprintln!("  herdr mail list [--unread-only] [--inbox X] [--from SENDER]");
     eprintln!("  <to> accepts pane ids, agent names, terminal ids, or the literal 'parent' (resolved from HERDR_PARENT_TERMINAL_ID, falling back to HERDR_PARENT_PANE_ID)");
     eprintln!("  --inbox selects whose inbox to read/list/wait on; defaults from HERDR_PANE_ID when omitted");
     eprintln!("  --from filters wait/list to mail sent by that sender (pane id, agent name, or terminal id); omit to match any sender");
+    eprintln!(
+        "  neither 'mail wait' nor 'mail list' ever mark a message read on their own — only 'mail read' and 'mail wait --consume' do"
+    );
+    eprintln!("  when the recipient pane has a detected/reported agent, a delivered message wakes it with a one-line pane nudge (config: [mail] nudge, default true; opt out per-send with --no-nudge)");
 }
 
 #[cfg(test)]

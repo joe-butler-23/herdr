@@ -339,6 +339,14 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # a Herdr server restart. Requires official integrations that report session refs.
 # resume_agents_on_restore = true
 
+[mail]
+# Wake an idle/done recipient pane with a one-line keystroke nudge when
+# `herdr mail send` delivers to it. Queued until the recipient's next
+# transition into idle/done if it's currently working/blocked/unknown.
+# Never delivered to panes without a detected/reported agent (plain shells).
+# Opt a single send out with `herdr mail send --no-nudge ...`.
+# nudge = true
+
 [remote]
 # Whether herdr manages the ssh config used for `herdr --remote`.
 # When true (default), herdr runs remote ssh through a generated config that

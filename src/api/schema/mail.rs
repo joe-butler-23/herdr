@@ -92,6 +92,12 @@ pub struct MailSendParams {
     /// hook callers. `None` for the plain CLI unless explicitly passed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_agent: Option<String>,
+    /// Suppress the doorbell keystroke nudge for this one message (the
+    /// message is still stored/delivered normally; only the pane-typed
+    /// notification is skipped). Default: false. See `[mail] nudge` in
+    /// config.toml for the global gate.
+    #[serde(default)]
+    pub no_nudge: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
@@ -132,4 +138,12 @@ pub struct MailWaitParams {
     pub sender: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    /// When true, atomically mark the matched message read (`read: true` on
+    /// the returned envelope) before returning it, instead of leaving it
+    /// unread for a separate `mail.read` call. Default: false — `mail.wait`
+    /// does NOT mark anything read unless this is set, so a re-armed wait
+    /// re-returns the same message until it is read (via `mail.read` or
+    /// `consume`).
+    #[serde(default)]
+    pub consume: bool,
 }

@@ -4259,6 +4259,53 @@ fn wait_agent_status_times_out_when_status_does_not_match() {
     cleanup_spawned_herdr(herdr, base);
 }
 
+/// Regression test for the `pane_get`/`pane_read` probe decode bug: passing
+/// a target that doesn't resolve to any live pane (an agent-name-shaped
+/// string like "terra", or an otherwise unresolvable pane id) used to
+/// surface as a generic `internal_error` ("failed to decode pane get
+/// error") instead of the underlying `pane_not_found` — a `serde_json::
+/// from_value` call without an explicit turbofish was inferring the `Ok`
+/// type (`PaneInfo`) from the enclosing function's return type instead of
+/// `ErrorResponse`, so it always failed to decode a real error response and
+/// masked it behind a decode-failure message.
+#[test]
+fn wait_agent_status_bad_target_surfaces_clean_error_not_internal_error() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let waited = run_cli(
+        &socket_path,
+        &[
+            "wait",
+            "agent-status",
+            "terra",
+            "--status",
+            "idle",
+            "--timeout",
+            "500",
+        ],
+    );
+    assert!(!waited.status.success());
+    let stderr = String::from_utf8_lossy(&waited.stderr);
+    let response: serde_json::Value =
+        serde_json::from_str(stderr.trim()).unwrap_or_else(|_| panic!("stderr: {stderr}"));
+    assert_eq!(
+        response["error"]["code"], "pane_not_found",
+        "expected a clean pane_not_found error, not a decode-failure internal_error: {response}"
+    );
+    assert_ne!(
+        response["error"]["message"], "failed to decode pane get error",
+        "the underlying pane-resolution error must not be masked by a decode failure"
+    );
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
 #[test]
 fn wait_agent_status_exits_when_done_status_matches() {
     let base = unique_test_dir();

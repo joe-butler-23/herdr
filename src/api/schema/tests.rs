@@ -1110,6 +1110,7 @@ fn request_round_trips_for_mail_send() {
             body: "Ran the full suite; 412 passed.".into(),
             from_pane_id: Some("p_1_5".into()),
             from_agent: Some("claude".into()),
+            no_nudge: false,
         }),
     };
 
@@ -1179,6 +1180,7 @@ fn request_round_trips_for_mail_wait() {
             inbox: "p_1_5".into(),
             sender: None,
             timeout_ms: Some(900_000),
+            consume: false,
         }),
     };
 
@@ -1196,6 +1198,7 @@ fn request_round_trips_for_mail_wait_with_sender_filter() {
             inbox: "p_1_5".into(),
             sender: Some("p_1_3".into()),
             timeout_ms: Some(900_000),
+            consume: false,
         }),
     };
 

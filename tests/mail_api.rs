@@ -248,7 +248,33 @@ fn mail_send(
     body: &str,
     from_pane_id: Option<&str>,
 ) -> Value {
-    let mut params = json!({"to": to, "kind": kind, "subject": subject, "body": body});
+    mail_send_ex(
+        socket_path,
+        id,
+        to,
+        kind,
+        subject,
+        body,
+        from_pane_id,
+        false,
+    )
+}
+
+/// `mail.send` with the `--no-nudge` flag under caller control (the plain
+/// `mail_send` above always leaves it at the default `false`).
+#[allow(clippy::too_many_arguments)]
+fn mail_send_ex(
+    socket_path: &Path,
+    id: &str,
+    to: &str,
+    kind: &str,
+    subject: &str,
+    body: &str,
+    from_pane_id: Option<&str>,
+    no_nudge: bool,
+) -> Value {
+    let mut params =
+        json!({"to": to, "kind": kind, "subject": subject, "body": body, "no_nudge": no_nudge});
     if let Some(from_pane_id) = from_pane_id {
         params["from_pane_id"] = json!(from_pane_id);
     }
@@ -256,6 +282,65 @@ fn mail_send(
         socket_path,
         &json!({"id": id, "method": "mail.send", "params": params}),
     )
+}
+
+/// `pane.report_agent` — establishes (or transitions) a detected/reported
+/// agent's state on a pane. Nudge delivery gates on this: only panes with a
+/// reported agent label are ever nudged.
+fn pane_report_agent(
+    socket_path: &Path,
+    id: &str,
+    pane_id: &str,
+    source: &str,
+    agent: &str,
+    state: &str,
+) -> Value {
+    send_request(
+        socket_path,
+        &json!({
+            "id": id,
+            "method": "pane.report_agent",
+            "params": {"pane_id": pane_id, "source": source, "agent": agent, "state": state},
+        }),
+    )
+}
+
+/// `pane.read` (visible source) — used to observe the nudge line typed into
+/// a recipient pane. Real PTYs echo typed-but-unsubmitted keystrokes at the
+/// tty layer, so this shows the nudge even before/without pressing Enter.
+fn pane_read_visible(socket_path: &Path, id: &str, pane_id: &str) -> String {
+    let response = send_request(
+        socket_path,
+        &json!({"id": id, "method": "pane.read", "params": {"pane_id": pane_id, "source": "visible"}}),
+    );
+    response["result"]["read"]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Poll `pane.read` until `needle` appears in the pane's visible text or the
+/// deadline elapses. Delivery is asynchronous relative to the request that
+/// triggers it (the nudge bytes are written to the pane's PTY master
+/// synchronously, but the terminal emulator's screen buffer update runs on a
+/// separate reader task), so a bare one-shot read can race the render.
+fn wait_for_pane_text(
+    socket_path: &Path,
+    pane_id: &str,
+    needle: &str,
+    timeout: Duration,
+) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let text = pane_read_visible(socket_path, "wait_for_pane_text", pane_id);
+        if text.contains(needle) {
+            return Some(text);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Blocking `mail.wait`. The client-side read timeout is padded well past
@@ -275,7 +360,20 @@ fn mail_wait_from(
     sender: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Value {
-    let mut params = json!({"inbox": inbox});
+    mail_wait_ex(socket_path, id, inbox, sender, timeout_ms, false)
+}
+
+/// `mail.wait` with the `--consume` flag under caller control.
+#[allow(clippy::too_many_arguments)]
+fn mail_wait_ex(
+    socket_path: &Path,
+    id: &str,
+    inbox: &str,
+    sender: Option<&str>,
+    timeout_ms: Option<u64>,
+    consume: bool,
+) -> Value {
+    let mut params = json!({"inbox": inbox, "consume": consume});
     if let Some(sender) = sender {
         params["sender"] = json!(sender);
     }
@@ -1109,6 +1207,367 @@ fn parent_env_vars_stamped_on_agent_start() {
         last_text.contains(&expected),
         "expected worker pane output to contain {expected:?} (proving HERDR_PARENT_TERMINAL_ID/\
          HERDR_PARENT_PANE_ID were stamped from parent_pane_id), got: {last_text:?}"
+    );
+
+    cleanup_spawned_herdr(child, base);
+}
+
+// ================= Nudge (doorbell) mechanism =================
+
+/// (a) A recipient pane with a hook-reported agent already in an
+/// idle/done state receives the nudge immediately: `mail.send` types a
+/// `[herdr mail] ...` line into the pane's PTY (observable via `pane.read`),
+/// no separate wake-up step required.
+#[test]
+fn nudge_delivers_immediately_to_idle_reported_agent() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "nudge_a:ws");
+    let recipient = root_pane_of(&created);
+    let sender = split_pane(&socket_path, "nudge_a:split", &recipient.pane_id, false);
+
+    let reported = pane_report_agent(
+        &socket_path,
+        "nudge_a:report",
+        &recipient.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "idle",
+    );
+    assert_eq!(reported["result"]["type"], "ok", "{reported}");
+
+    let sent = mail_send(
+        &socket_path,
+        "nudge_a:send",
+        &recipient.pane_id,
+        "done",
+        "worker finished",
+        "all good",
+        Some(&sender.pane_id),
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+    let mail_id = sent["result"]["envelope"]["id"].as_u64().unwrap();
+
+    let text = wait_for_pane_text(
+        &socket_path,
+        &recipient.pane_id,
+        "[herdr mail]",
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|| panic!("nudge line never appeared in the idle recipient's pane"));
+    assert!(
+        text.contains("done") && text.contains("worker finished"),
+        "nudge line should name the kind and subject of the single unread message, got: {text}"
+    );
+    assert!(
+        text.contains(&format!("herdr mail read {mail_id}")),
+        "nudge line should point at the exact unread message id, got: {text}"
+    );
+
+    cleanup_spawned_herdr(child, base);
+}
+
+/// (b) A recipient reported `working` must NOT receive the nudge — it must
+/// be queued instead — and the queued nudge is delivered on the recipient's
+/// next transition into idle (a second `pane.report_agent` call), not
+/// before.
+#[test]
+fn nudge_queues_while_working_and_delivers_on_transition_to_idle() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "nudge_b:ws");
+    let recipient = root_pane_of(&created);
+    let sender = split_pane(&socket_path, "nudge_b:split", &recipient.pane_id, false);
+
+    let reported = pane_report_agent(
+        &socket_path,
+        "nudge_b:report_working",
+        &recipient.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "working",
+    );
+    assert_eq!(reported["result"]["type"], "ok", "{reported}");
+
+    let sent = mail_send(
+        &socket_path,
+        "nudge_b:send",
+        &recipient.pane_id,
+        "done",
+        "worker finished",
+        "all good",
+        Some(&sender.pane_id),
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+
+    // While still working, no nudge — typing into a working agent's turn
+    // would corrupt it.
+    let text_while_working = pane_read_visible(&socket_path, "nudge_b:read1", &recipient.pane_id);
+    assert!(
+        !text_while_working.contains("[herdr mail]"),
+        "must not nudge a working recipient: {text_while_working}"
+    );
+    thread::sleep(Duration::from_millis(300));
+    let text_while_working_2 = pane_read_visible(&socket_path, "nudge_b:read2", &recipient.pane_id);
+    assert!(
+        !text_while_working_2.contains("[herdr mail]"),
+        "must still not nudge a working recipient after a delay: {text_while_working_2}"
+    );
+
+    let transitioned = pane_report_agent(
+        &socket_path,
+        "nudge_b:report_idle",
+        &recipient.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "idle",
+    );
+    assert_eq!(transitioned["result"]["type"], "ok", "{transitioned}");
+
+    let text_after_idle = wait_for_pane_text(
+        &socket_path,
+        &recipient.pane_id,
+        "[herdr mail]",
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|| panic!("queued nudge never arrived after transition to idle"));
+    assert!(
+        text_after_idle.contains("worker finished"),
+        "delivered nudge should still describe the originally-queued message: {text_after_idle}"
+    );
+
+    cleanup_spawned_herdr(child, base);
+}
+
+/// (c) `--no-nudge` (wire: `no_nudge: true`) suppresses the nudge entirely
+/// for that one message, even though the recipient is already idle and
+/// would otherwise be nudged immediately. The message itself is still
+/// stored and deliverable via `mail.wait`/`mail.read`.
+#[test]
+fn nudge_suppressed_by_no_nudge_flag() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "nudge_c:ws");
+    let recipient = root_pane_of(&created);
+    let sender = split_pane(&socket_path, "nudge_c:split", &recipient.pane_id, false);
+
+    let reported = pane_report_agent(
+        &socket_path,
+        "nudge_c:report",
+        &recipient.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "idle",
+    );
+    assert_eq!(reported["result"]["type"], "ok", "{reported}");
+
+    let sent = mail_send_ex(
+        &socket_path,
+        "nudge_c:send",
+        &recipient.pane_id,
+        "done",
+        "quiet completion",
+        "no nudge please",
+        Some(&sender.pane_id),
+        true,
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+
+    thread::sleep(Duration::from_millis(500));
+    let text = pane_read_visible(&socket_path, "nudge_c:read", &recipient.pane_id);
+    assert!(
+        !text.contains("[herdr mail]"),
+        "--no-nudge must suppress the keystroke nudge: {text}"
+    );
+
+    // The message is still there, just quiet — mail.wait still sees it.
+    let waited = mail_wait(
+        &socket_path,
+        "nudge_c:wait",
+        &recipient.pane_id,
+        Some(2_000),
+    );
+    assert_eq!(waited["result"]["type"], "mail_wait_matched", "{waited}");
+    assert_eq!(waited["result"]["envelope"]["subject"], "quiet completion");
+
+    cleanup_spawned_herdr(child, base);
+}
+
+/// (d) A plain shell pane (no `pane.report_agent` ever called on it) must
+/// never be nudged, regardless of mail sent to it — only panes with a
+/// detected/reported agent are eligible.
+#[test]
+fn nudge_never_delivered_to_plain_shell_pane() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "nudge_d:ws");
+    let recipient = root_pane_of(&created);
+
+    let sent = mail_send(
+        &socket_path,
+        "nudge_d:send",
+        &recipient.pane_id,
+        "info",
+        "fyi",
+        "just some info",
+        None,
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+
+    thread::sleep(Duration::from_millis(500));
+    let text = pane_read_visible(&socket_path, "nudge_d:read", &recipient.pane_id);
+    assert!(
+        !text.contains("[herdr mail]"),
+        "a plain shell pane with no detected/reported agent must never be nudged: {text}"
+    );
+
+    // Mail is still delivered through the normal channel.
+    let waited = mail_wait(
+        &socket_path,
+        "nudge_d:wait",
+        &recipient.pane_id,
+        Some(2_000),
+    );
+    assert_eq!(waited["result"]["type"], "mail_wait_matched", "{waited}");
+
+    cleanup_spawned_herdr(child, base);
+}
+
+/// (e) If the recipient reads all its mail on its own before a queued nudge
+/// is delivered, the pending nudge is cancelled — the subsequent transition
+/// into idle must NOT type a now-stale nudge line.
+#[test]
+fn nudge_cancelled_when_recipient_reads_mail_before_delivery() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "nudge_e:ws");
+    let recipient = root_pane_of(&created);
+    let sender = split_pane(&socket_path, "nudge_e:split", &recipient.pane_id, false);
+
+    let reported = pane_report_agent(
+        &socket_path,
+        "nudge_e:report_working",
+        &recipient.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "working",
+    );
+    assert_eq!(reported["result"]["type"], "ok", "{reported}");
+
+    let sent = mail_send(
+        &socket_path,
+        "nudge_e:send",
+        &recipient.pane_id,
+        "done",
+        "worker finished",
+        "all good",
+        Some(&sender.pane_id),
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+    let mail_id = sent["result"]["envelope"]["id"].as_u64().unwrap();
+
+    // The recipient checks its own mail before the queued nudge fires.
+    let read = mail_read(
+        &socket_path,
+        "nudge_e:read_own_mail",
+        &recipient.pane_id,
+        mail_id,
+    );
+    assert_eq!(read["result"]["type"], "mail_read", "{read}");
+
+    let transitioned = pane_report_agent(
+        &socket_path,
+        "nudge_e:report_idle",
+        &recipient.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "idle",
+    );
+    assert_eq!(transitioned["result"]["type"], "ok", "{transitioned}");
+
+    thread::sleep(Duration::from_millis(500));
+    let text = pane_read_visible(&socket_path, "nudge_e:read_pane", &recipient.pane_id);
+    assert!(
+        !text.contains("[herdr mail]"),
+        "reading all mail before delivery must cancel the queued nudge: {text}"
+    );
+
+    cleanup_spawned_herdr(child, base);
+}
+
+// ================= mail.wait --consume =================
+
+/// `mail.wait --consume` atomically marks the matched message read (the
+/// returned envelope shows `read: true`) so a re-armed wait does not
+/// re-return the same message — it must genuinely time out instead.
+#[test]
+fn mail_wait_consume_marks_read_and_re_armed_wait_times_out() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "consume:ws");
+    let pane1 = root_pane_of(&created);
+
+    let sent = mail_send(
+        &socket_path,
+        "consume:send",
+        &pane1.pane_id,
+        "info",
+        "consume me",
+        "body",
+        None,
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+    let mail_id = sent["result"]["envelope"]["id"].as_u64().unwrap();
+
+    let waited = mail_wait_ex(
+        &socket_path,
+        "consume:wait1",
+        &pane1.pane_id,
+        None,
+        Some(2_000),
+        true,
+    );
+    assert_eq!(waited["result"]["type"], "mail_wait_matched", "{waited}");
+    assert_eq!(waited["result"]["envelope"]["id"], mail_id);
+    assert_eq!(
+        waited["result"]["envelope"]["read"], true,
+        "consume must mark the matched envelope read in the same response"
+    );
+
+    // Confirm it's really persisted as read, not just reflected in this
+    // one response.
+    let listed = mail_list(&socket_path, "consume:list", &pane1.pane_id, true);
+    let unread = listed["result"]["messages"].as_array().unwrap();
+    assert!(
+        unread.is_empty(),
+        "consumed message must no longer show up as unread: {listed}"
+    );
+
+    // A re-armed wait must genuinely block and time out — the message was
+    // consumed, not left for a second delivery.
+    let start = Instant::now();
+    let timed_out = mail_wait_ex(
+        &socket_path,
+        "consume:wait2",
+        &pane1.pane_id,
+        None,
+        Some(300),
+        false,
+    );
+    let elapsed = start.elapsed();
+    assert_eq!(
+        timed_out["error"]["code"], "timeout",
+        "a re-armed wait after --consume must time out, not re-return the same message: {timed_out}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(300),
+        "timeout fired too early ({elapsed:?})"
     );
 
     cleanup_spawned_herdr(child, base);

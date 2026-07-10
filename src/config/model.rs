@@ -257,6 +257,22 @@ impl Default for SessionConfig {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct MailConfig {
+    /// Wake an idle/done recipient pane with a one-line keystroke nudge when
+    /// `herdr mail send` delivers to it (queued until the recipient's next
+    /// transition into idle/done if it's currently working/blocked/unknown).
+    /// Never delivered to panes without a detected/reported agent. Default: true.
+    pub nudge: bool,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        Self { nudge: true }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -291,6 +307,7 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub terminal: TerminalConfig,
     pub session: SessionConfig,
+    pub mail: MailConfig,
     pub update: UpdateConfig,
     pub keys: KeysConfig,
     pub ui: UiConfig,
@@ -1176,6 +1193,19 @@ resume_agents_on_restore = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
+    }
+
+    #[test]
+    fn mail_nudge_defaults_on_and_parses() {
+        let default_config = Config::default();
+        assert!(default_config.mail.nudge);
+
+        let toml = r#"
+[mail]
+nudge = false
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(!config.mail.nudge);
     }
 
     #[test]

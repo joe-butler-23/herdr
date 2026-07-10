@@ -1898,6 +1898,11 @@
             "kind": {
               "$ref": "#/schemas/request/$defs/MailKind"
             },
+            "no_nudge": {
+              "default": false,
+              "description": "Suppress the doorbell keystroke nudge for this one message (the\nmessage is still stored/delivered normally; only the pane-typed\nnotification is skipped). Default: false. See `[mail] nudge` in\nconfig.toml for the global gate.",
+              "type": "boolean"
+            },
             "subject": {
               "description": "Truncated server-side to 120 chars (UTF-8 char boundary safe).",
               "type": "string"
@@ -1916,6 +1921,11 @@
         },
         "MailWaitParams": {
           "properties": {
+            "consume": {
+              "default": false,
+              "description": "When true, atomically mark the matched message read (`read: true` on\nthe returned envelope) before returning it, instead of leaving it\nunread for a separate `mail.read` call. Default: false — `mail.wait`\ndoes NOT mark anything read unless this is set, so a re-armed wait\nre-returns the same message until it is read (via `mail.read` or\n`consume`).",
+              "type": "boolean"
+            },
             "inbox": {
               "description": "Whose inbox to wait on. Required on the wire; the CLI defaults it\nfrom `HERDR_PANE_ID` when `--inbox` is omitted. Not defaulted\nserver-side because the server has no calling-pane identity.",
               "type": "string"

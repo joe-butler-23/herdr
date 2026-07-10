@@ -1441,6 +1441,16 @@ pub struct AppState {
     /// server restarts, matching EventHub.
     pub(crate) mail_inboxes:
         std::collections::HashMap<crate::terminal::TerminalId, crate::app::mail_store::MailInbox>,
+    /// Recipients with a nudge queued for delivery: `mail.send` landed while
+    /// the recipient's agent was working/blocked/unknown, so delivery is
+    /// deferred to the recipient's next transition into idle/done. At most
+    /// one pending nudge per recipient — the nudge line is computed fresh
+    /// from unread mail at delivery time, not stored here. Removed on
+    /// delivery, or if all the recipient's mail is read before delivery.
+    pub(crate) mail_pending_nudges: std::collections::HashSet<crate::terminal::TerminalId>,
+    /// `[mail] nudge` config gate. When false, `mail.send` never delivers or
+    /// queues a keystroke nudge regardless of recipient agent state.
+    pub(crate) mail_nudge_enabled: bool,
     /// Highlight state for the bottom-right global launcher menu.
     pub global_menu: MenuListState,
     /// Resolved host terminal default colors for theming embedded panes.
@@ -1882,6 +1892,8 @@ impl AppState {
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
             mail_inboxes: std::collections::HashMap::new(),
+            mail_pending_nudges: std::collections::HashSet::new(),
+            mail_nudge_enabled: true,
             global_menu: MenuListState::new(0),
             host_terminal_theme: TerminalTheme::default(),
             session_dirty: false,

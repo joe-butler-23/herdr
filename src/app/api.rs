@@ -560,6 +560,17 @@ impl App {
                 },
             });
         }
+
+        // Mail nudge: deliver any nudge queued for this pane's terminal if
+        // it just transitioned into idle/done. Independent of whether an
+        // event was actually emitted above (that's gated on presentation
+        // changes too) — this only cares about the raw status transition.
+        self.deliver_queued_nudge_on_transition(
+            update.ws_idx,
+            update.pane_id,
+            previous_agent_status,
+            agent_status,
+        );
     }
 
     fn emit_terminal_or_system_agent_notifications(

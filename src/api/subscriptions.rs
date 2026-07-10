@@ -492,13 +492,19 @@ fn pane_read(
         },
     })?;
     if value.get("error").is_some() {
-        return serde_json::from_value(value).map_err(|_| ErrorResponse {
-            id: request_id,
-            error: ErrorBody {
-                code: "internal_error".into(),
-                message: "failed to decode pane read error".into(),
-            },
-        });
+        // See the identical fix in `pane_get` below: the turbofish + `Err`
+        // wrap are load-bearing, not decorative — without them this line
+        // infers `PaneReadResult` (the function's `Ok` type) instead of
+        // `ErrorResponse` and always fails to decode a real error.
+        return Err(
+            serde_json::from_value::<ErrorResponse>(value).unwrap_or_else(|_| ErrorResponse {
+                id: request_id,
+                error: ErrorBody {
+                    code: "internal_error".into(),
+                    message: "failed to decode pane read error".into(),
+                },
+            }),
+        );
     }
     serde_json::from_value(value["result"]["read"].clone()).map_err(|_| ErrorResponse {
         id: request_id,
@@ -532,13 +538,21 @@ fn pane_get(
         },
     })?;
     if value.get("error").is_some() {
-        return serde_json::from_value(value).map_err(|_| ErrorResponse {
-            id: request_id,
-            error: ErrorBody {
-                code: "internal_error".into(),
-                message: "failed to decode pane get error".into(),
-            },
-        });
+        // Explicit turbofish + `Err(..)` wrap are both load-bearing: without
+        // the turbofish, type inference pulls the `Ok` type (`PaneInfo`) from
+        // this function's return type and tries to deserialize the error
+        // JSON as a pane, which always fails and masks the real error (e.g.
+        // `pane_not_found`) behind a generic "failed to decode pane get
+        // error" internal_error regardless of what actually went wrong.
+        return Err(
+            serde_json::from_value::<ErrorResponse>(value).unwrap_or_else(|_| ErrorResponse {
+                id: request_id,
+                error: ErrorBody {
+                    code: "internal_error".into(),
+                    message: "failed to decode pane get error".into(),
+                },
+            }),
+        );
     }
     serde_json::from_value(value["result"]["pane"].clone()).map_err(|_| ErrorResponse {
         id: request_id,

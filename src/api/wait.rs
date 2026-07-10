@@ -5,8 +5,9 @@ use regex::Regex;
 
 use crate::api::schema::{
     ErrorBody, ErrorResponse, EventData, EventEnvelope, EventKind, EventMatch, EventsWaitParams,
-    MailEnvelope, MailListParams, MailWaitParams, Method, Request, ResponseResult, Subscription,
-    SubscriptionEventData, SubscriptionEventEnvelope, SuccessResponse,
+    MailEnvelope, MailListParams, MailMessage, MailReadParams, MailWaitParams, Method, Request,
+    ResponseResult, Subscription, SubscriptionEventData, SubscriptionEventEnvelope,
+    SuccessResponse,
 };
 use crate::api::server::{
     dispatch_to_app_with_timeout, should_stop_connection, APP_RESPONSE_TIMEOUT,
@@ -130,8 +131,12 @@ pub(super) fn wait_for_output(
 /// as the poll primitive (no bespoke peek method — mirrors
 /// `wait_for_output` re-dispatching `Method::PaneRead` each tick) and takes
 /// the lowest-id (oldest) unread envelope (optionally filtered to a single
-/// sender), without marking anything read. Mail from any other sender never
-/// satisfies a sender-filtered wait and is left untouched in the inbox.
+/// sender). By default nothing is marked read: a re-armed wait re-returns
+/// the same message until it's read (via `mail.read` or `consume` below).
+/// Mail from any other sender never satisfies a sender-filtered wait and is
+/// left untouched in the inbox. When `params.consume` is set, the matched
+/// message is atomically marked read (via `Method::MailRead`) before its
+/// envelope (now `read: true`) is returned.
 pub(super) fn wait_for_mail(
     request_id: String,
     params: MailWaitParams,
@@ -142,6 +147,7 @@ pub(super) fn wait_for_mail(
     let deadline = params
         .timeout_ms
         .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+    let consume = params.consume;
     let list_params = MailListParams {
         inbox: params.inbox,
         sender: params.sender,
@@ -183,6 +189,14 @@ pub(super) fn wait_for_mail(
         };
 
         if let Some(envelope) = messages.into_iter().next() {
+            let envelope = if consume {
+                match consume_mail(&request_id, &list_params.inbox, envelope.id, api_tx) {
+                    Ok(envelope) => envelope,
+                    Err(response) => return Ok(Some(response)),
+                }
+            } else {
+                envelope
+            };
             return Ok(Some(
                 serde_json::to_string(&SuccessResponse {
                     id: request_id,
@@ -207,6 +221,46 @@ pub(super) fn wait_for_mail(
 
         std::thread::sleep(CONNECTION_POLL_INTERVAL);
     }
+}
+
+/// Mark `mail_id` in `inbox` read via `Method::MailRead` and return its
+/// envelope (now `read: true`). Used by `mail.wait --consume` to atomically
+/// consume the matched message before returning it, instead of leaving it
+/// unread for a separate `mail.read` call.
+fn consume_mail(
+    request_id: &str,
+    inbox: &str,
+    mail_id: u64,
+    api_tx: &ApiRequestSender,
+) -> Result<MailEnvelope, String> {
+    let read_request = Request {
+        id: format!("{request_id}:consume"),
+        method: Method::MailRead(MailReadParams {
+            inbox: inbox.to_string(),
+            id: mail_id,
+        }),
+    };
+    let response = dispatch_to_app_with_timeout(read_request, api_tx, Some(APP_RESPONSE_TIMEOUT));
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&response) else {
+        return Err(response);
+    };
+    if value.get("error").is_some() {
+        value["id"] = serde_json::Value::String(request_id.to_string());
+        return Err(serde_json::to_string(&value).unwrap());
+    }
+    let message_value = value["result"]["message"].clone();
+    serde_json::from_value::<MailMessage>(message_value)
+        .map(|message| message.envelope)
+        .map_err(|_| {
+            serde_json::to_string(&ErrorResponse {
+                id: request_id.to_string(),
+                error: ErrorBody {
+                    code: "internal_error".into(),
+                    message: "failed to decode mail read result while consuming".into(),
+                },
+            })
+            .unwrap()
+        })
 }
 
 pub(super) fn wait_for_event(

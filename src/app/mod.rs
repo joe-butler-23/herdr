@@ -649,6 +649,8 @@ impl App {
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
             mail_inboxes: std::collections::HashMap::new(),
+            mail_pending_nudges: std::collections::HashSet::new(),
+            mail_nudge_enabled: config.mail.nudge,
             global_menu: state::MenuListState::new(0),
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             session_dirty: false,
@@ -1416,6 +1418,10 @@ impl App {
 
         if !invalid_section("advanced") {
             self.state.pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes;
+        }
+
+        if !invalid_section("mail") {
+            self.state.mail_nudge_enabled = config.mail.nudge;
         }
 
         if !invalid_section("update") {
