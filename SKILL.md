@@ -228,42 +228,87 @@ herdr pane close 1-3
 
 ## delegate to another agent (mail)
 
-spawn a worker pane and coordinate via the inter-agent message bus. mail is the preferred way to orchestrate workers because it avoids token-expensive polling: the orchestrator spawns once, sends the task, then blocks waiting on the worker's final message instead of repeatedly reading pane text.
-
-mail always lands in the **recipient's** inbox — when a worker sends to `parent`, the message is stored in the orchestrator's own inbox, not the worker's. so the orchestrator always waits/reads/lists its **own** inbox (the default, taken from `HERDR_PANE_ID` — no `--inbox` flag needed) and uses `--from <sender>` only to filter which sender's mail it is willing to match. this matters with more than one worker in flight: without `--from`, `mail wait` returns the oldest unread mail from ANY sender, so a wait aimed at one worker can be satisfied by a different worker's unrelated message.
-
-canonical delegation loop:
+spawn a worker with its task as argv — never launch a bare agent and then
+type the prompt in a second step. launch-then-type is racy: it is easy to
+forget the Enter keypress, or to send the prompt before the agent has
+finished booting and lose it to a boot race. `herdr agent start` takes the
+full command, prompt included, after `--`, so the spawn is one atomic
+operation, and it stamps the new pane's parent context for you (its
+`HERDR_PARENT_TERMINAL_ID` is set without an explicit `--parent-pane`).
 
 ```bash
-# spawn a worker pane with your pane as its parent
-NEW_PANE=$(herdr pane split 1-2 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+# claude worker
+NEW=$(herdr agent start claude --cwd . --split right --no-focus -- \
+  claude "research kubernetes operator patterns — when done your final message is mailed to me automatically" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["terminal_id"])')
 
-# start an agent in that pane (automatically sets parent context)
-herdr pane run "$NEW_PANE" "claude"
+# codex worker: always launch it in ~/vault — that cwd's folder permissions
+# are what make bypassing approvals/sandbox safe. pick model/effort with
+# -m and -c model_reasoning_effort= (codex has no literal --yolo flag; this
+# is the flag combination its own TUI labels "YOLO mode").
+herdr agent start codex --cwd /home/joebutler/vault --split right --no-focus -- \
+  codex --dangerously-bypass-approvals-and-sandbox -m <model> \
+  -c model_reasoning_effort=<minimal|low|medium|high> "task"
 
-# wait for it to be ready
-herdr wait output "$NEW_PANE" --match ">" --timeout 15000
+# opencode worker: the prompt-as-argv subcommand is `run`, not the bare
+# `opencode <project>` form
+herdr agent start opencode --cwd . --split right --no-focus -- \
+  opencode run "task" -m <provider/model>
+```
 
-# send the task
-herdr pane run "$NEW_PANE" "research kubernetes operator patterns"
+mail is the preferred way to get the result back, because it avoids
+token-expensive polling. mail always lands in the **recipient's** inbox —
+when a worker sends to `parent`, the message is stored in the orchestrator's
+own inbox, not the worker's. so the orchestrator always waits/reads/lists
+its **own** inbox (the default, taken from `HERDR_PANE_ID` — no `--inbox`
+flag needed) and uses `--from <sender>` only to filter which sender's mail
+it is willing to match. this matters with more than one worker in flight:
+without `--from`, `mail wait` returns the oldest unread mail from ANY
+sender, so a wait aimed at one worker can be satisfied by a different
+worker's unrelated message.
 
-# background the mail wait (if your harness supports background shell tasks)
-# to spend zero tokens while the worker runs. --from filters to mail sent by
-# this worker specifically, so a different worker's mail can't satisfy it;
-# no --inbox is given, so this waits on your OWN inbox (from HERDR_PANE_ID).
-herdr mail wait --timeout 120000 --from "$NEW_PANE" &
+there are two zero-token ways to wait for the result — pick whichever your
+harness supports, do not fall back to polling:
 
-# when you need the result, read just the envelope first (mail.read has no
-# sender filter — it looks up an exact id in your own inbox by default)
+```bash
+# 1. background the wait, if your harness notifies you on background-task
+# completion (claude code does), and keep working until it fires
+herdr mail wait --timeout 120000 --from "$NEW" &
+
+# 2. otherwise just end your turn right after dispatch. herdr wakes a
+# waiting orchestrator by typing a mail notice into its pane the moment the
+# worker's mail arrives — mail sent while you are still mid-turn queues and
+# is delivered the instant you go idle.
+```
+
+never loop a foreground `mail wait` with retries, and never poll `pane
+read`/`wait agent-status` to check on a worker instead — both defeat the
+point of mail. when you need the result, read just the envelope first
+(`mail read` has no sender filter — it looks up an exact id in your own
+inbox by default), then the body only if it is worth the token cost:
+
+```bash
 ENVELOPE=$(herdr mail read <id>)
-
-# read the full body only if body_bytes is worth the token cost
 herdr mail read <id> | jq .body
 ```
 
-worker sends a reply by calling `herdr mail send parent --kind done --subject "..." --body-stdin` (resolve `parent` in the CLI from `HERDR_PARENT_TERMINAL_ID` or `HERDR_PARENT_PANE_ID`; the server has no notion of "parent").
+`mail wait` does not mark mail read — always follow it with `herdr mail
+read <id>` for whatever woke you, or pass `--consume` on the wait itself.
 
-with the claude/codex/opencode integrations installed, delegated workers (panes spawned with a `--parent-pane`) automatically send `done` mail when their turn finishes and `blocked` mail when awaiting permission. standalone panes (no parent) never send automatic mail.
+to message a worker that is still RUNNING (not at launch), use the typed
+channel instead: `herdr pane run <pane> "message"`. argv-as-prompt only
+works at spawn time.
+
+worker sends a reply by calling `herdr mail send parent --kind done --subject "..." --body-stdin` (resolve `parent` in the CLI from `HERDR_PARENT_TERMINAL_ID` or `HERDR_PARENT_PANE_ID`; the server has no notion of "parent"). for an interim question or status while still working, send `--kind question|info` instead and then end the turn — the reply wakes the worker the same way completion wakes the orchestrator.
+
+with the claude/codex/opencode integrations installed, delegated workers
+(panes spawned with a parent context) automatically send `done` mail when
+their turn finishes and `blocked` mail when awaiting permission — a worker
+does not need to send its own `done` mail, ending the turn is enough.
+standalone panes (no parent) never send automatic mail. `herdr integration
+install` also installs this delegation doctrine into claude/codex/opencode's
+global instructions, so a worker running any of those agents already knows
+these rules without being told them in its task prompt.
 
 ## recipes
 
@@ -311,14 +356,22 @@ herdr pane read 1-3 --source recent-unwrapped --lines 40
 ### spawn a new agent and give it a task
 
 ```bash
-herdr pane split 1-2 --direction right --no-focus
-herdr pane run 1-3 "claude"
-herdr wait output 1-3 --match ">" --timeout 15000
-herdr pane run 1-3 "review the test coverage in src/api/"
-herdr mail wait --timeout 120000 --from 1-3
+NEW=$(herdr agent start claude --cwd . --split right --no-focus -- \
+  claude "review the test coverage in src/api/ — when done your final message is mailed to me automatically" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["terminal_id"])')
+herdr mail wait --timeout 120000 --from "$NEW"
 ```
 
-the final `mail wait` blocks until 1-3 sends a `done` message (automatic with current integrations when the agent's turn completes); `--from 1-3` filters to that sender so a different in-flight worker's mail can't satisfy this wait, and the wait runs against your own default inbox since no `--inbox` is given. use this to coordinate with the agent without polling its screen.
+the prompt is argv, not typed in after boot — one atomic spawn, no race on
+the Enter key or the agent's boot time. the `mail wait` blocks until the
+worker sends `done` mail (automatic with current integrations when its turn
+completes); `--from "$NEW"` filters to that sender so a different in-flight
+worker's mail can't satisfy this wait, and the wait runs against your own
+default inbox since no `--inbox` is given. background this wait if your
+harness notifies on background-task completion; otherwise end your turn
+right after dispatch and let herdr's mail-arrival nudge wake you instead of
+blocking. use this to coordinate with the agent without ever polling its
+screen.
 
 ### coordinate with another agent
 

@@ -67,6 +67,10 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
                     "ensured claude settings at {}",
                     installed.settings_path.display()
                 ),
+                format!(
+                    "ensured claude delegation doctrine at {}",
+                    installed.doctrine_path.display()
+                ),
             ]
         }
         crate::api::schema::IntegrationTarget::Codex => {
@@ -80,6 +84,10 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
                 format!(
                     "ensured codex config at {}",
                     installed.config_path.display()
+                ),
+                format!(
+                    "ensured codex delegation doctrine at {}",
+                    installed.doctrine_path.display()
                 ),
             ]
         }
@@ -142,10 +150,16 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
         }
         crate::api::schema::IntegrationTarget::Opencode => {
             let installed = install_opencode()?;
-            vec![format!(
-                "installed opencode integration plugin to {}",
-                installed.plugin_path.display()
-            )]
+            vec![
+                format!(
+                    "installed opencode integration plugin to {}",
+                    installed.plugin_path.display()
+                ),
+                format!(
+                    "ensured opencode delegation doctrine at {}",
+                    installed.doctrine_path.display()
+                ),
+            ]
         }
         crate::api::schema::IntegrationTarget::Kilo => {
             let installed = install_kilo()?;
@@ -256,6 +270,17 @@ pub(crate) fn uninstall_target(
                     result.settings_path.display()
                 ));
             }
+            if result.updated_doctrine {
+                messages.push(format!(
+                    "removed herdr delegation doctrine from {}",
+                    result.doctrine_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no herdr delegation doctrine found in {}",
+                    result.doctrine_path.display()
+                ));
+            }
             messages
         }
         crate::api::schema::IntegrationTarget::Codex => {
@@ -287,6 +312,17 @@ pub(crate) fn uninstall_target(
                 "left codex config unchanged at {}",
                 result.config_path.display()
             ));
+            if result.updated_doctrine {
+                messages.push(format!(
+                    "removed herdr delegation doctrine from {}",
+                    result.doctrine_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no herdr delegation doctrine found in {}",
+                    result.doctrine_path.display()
+                ));
+            }
             messages
         }
         crate::api::schema::IntegrationTarget::Copilot => {
@@ -410,7 +446,7 @@ pub(crate) fn uninstall_target(
         }
         crate::api::schema::IntegrationTarget::Opencode => {
             let result = uninstall_opencode()?;
-            if result.removed_plugin {
+            let mut messages = if result.removed_plugin {
                 vec![format!(
                     "removed opencode integration plugin at {}",
                     result.plugin_path.display()
@@ -420,7 +456,19 @@ pub(crate) fn uninstall_target(
                     "no opencode integration plugin found at {}",
                     result.plugin_path.display()
                 )]
+            };
+            if result.updated_doctrine {
+                messages.push(format!(
+                    "removed herdr delegation doctrine from {}",
+                    result.doctrine_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no herdr delegation doctrine found in {}",
+                    result.doctrine_path.display()
+                ));
             }
+            messages
         }
         crate::api::schema::IntegrationTarget::Kilo => {
             let result = uninstall_kilo()?;

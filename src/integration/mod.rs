@@ -1,6 +1,7 @@
 mod actions;
 mod command;
 mod config_edit;
+mod doctrine;
 mod env;
 mod file_ops;
 mod registry;
@@ -9,6 +10,7 @@ mod types;
 mod version;
 
 pub(crate) use actions::{install_target, uninstall_target};
+pub(crate) use doctrine::DELEGATION_DOCTRINE;
 #[cfg(test)]
 pub(crate) use env::integration_env_lock;
 pub(crate) use env::{
@@ -37,7 +39,7 @@ const CLAUDE_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/claude/herdr-agent-state.sh")
 };
-const CLAUDE_INTEGRATION_VERSION: u32 = 8;
+const CLAUDE_INTEGRATION_VERSION: u32 = 9;
 const CODEX_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"
 } else {
@@ -48,7 +50,7 @@ const CODEX_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/codex/herdr-agent-state.sh")
 };
-const CODEX_INTEGRATION_VERSION: u32 = 8;
+const CODEX_INTEGRATION_VERSION: u32 = 9;
 const KIMI_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"
 } else {
@@ -141,7 +143,7 @@ const DROID_REMOVED_LIFECYCLE_HOOK_EVENTS: [(&str, &str); 9] = [
 ];
 const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const OPENCODE_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-agent-state.js");
-const OPENCODE_INTEGRATION_VERSION: u32 = 9;
+const OPENCODE_INTEGRATION_VERSION: u32 = 10;
 const KILO_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const KILO_PLUGIN_ASSET: &str = include_str!("assets/kilo/herdr-agent-state.js");
 const KILO_INTEGRATION_VERSION: u32 = 2;
@@ -181,6 +183,12 @@ const CURSOR_HOOK_INSTALL_NAME: &str = "herdr-agent-state.sh";
 const CURSOR_HOOK_ASSET: &str = include_str!("assets/cursor/herdr-agent-state.sh");
 const CURSOR_INTEGRATION_VERSION: u32 = 1;
 const INTEGRATION_VERSION_MARKER: &str = "HERDR_INTEGRATION_VERSION=";
+// Managed block markers for the delegation doctrine installed into each
+// agent's global markdown instructions file (claude/CLAUDE.md, codex/AGENTS.md,
+// opencode/AGENTS.md). HTML comments so the markers stay invisible when the
+// host file is rendered as markdown.
+const DOCTRINE_BLOCK_BEGIN: &str = "<!-- >>> herdr delegation doctrine -->";
+const DOCTRINE_BLOCK_END: &str = "<!-- <<< herdr delegation doctrine -->";
 
 pub(crate) const INSTALL_WARNING_PREFIX: &str = "warning:";
 

@@ -3,7 +3,7 @@
 # managed by herdr; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # HERDR_INTEGRATION_ID=codex
-# HERDR_INTEGRATION_VERSION=8
+# HERDR_INTEGRATION_VERSION=9
 
 set -eu
 
@@ -77,7 +77,7 @@ if action in ("mail-done", "mail-blocked"):
             # would otherwise produce a zero-information envelope: empty
             # subject and body_bytes 0. Say so explicitly instead.
             mail_subject = "done (no message)"
-            mail_body = ""
+            mail_body = "(no message)"
     else:
         # PermissionRequest's payload carries tool_name/tool_input, not a
         # free-text message field; build a best-effort human summary.

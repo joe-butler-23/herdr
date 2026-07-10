@@ -2,7 +2,7 @@
 # managed by herdr; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # HERDR_INTEGRATION_ID=codex
-# HERDR_INTEGRATION_VERSION=8
+# HERDR_INTEGRATION_VERSION=9
 
 param([string]$Action = "")
 
@@ -30,7 +30,7 @@ if ($Action -eq "mail-done" -or $Action -eq "mail-blocked") {
             # A turn that emitted no assistant text (e.g. a tool-only turn)
             # would otherwise produce a zero-information envelope: empty
             # subject and body_bytes 0. Say so explicitly instead.
-            $mailBody = ""
+            $mailBody = "(no message)"
             $mailSubject = "done (no message)"
         } else {
             $mailSubject = ($mailBody -split "`n")[0]

@@ -7,7 +7,8 @@ use super::command::{hook_command, legacy_bash_hook_command};
 #[cfg(windows)]
 use super::file_ops::legacy_bash_hook_path;
 use super::{
-    HERMES_PLUGIN_INSTALL_NAME, KIMI_CONFIG_BLOCK_BEGIN, KIMI_CONFIG_BLOCK_END, KIMI_HOOK_EVENTS,
+    DELEGATION_DOCTRINE, DOCTRINE_BLOCK_BEGIN, DOCTRINE_BLOCK_END, HERMES_PLUGIN_INSTALL_NAME,
+    KIMI_CONFIG_BLOCK_BEGIN, KIMI_CONFIG_BLOCK_END, KIMI_HOOK_EVENTS,
 };
 
 pub(crate) fn ensure_hooks_object<'a>(
@@ -727,6 +728,65 @@ pub(crate) fn remove_kimi_config_block(content: &str) -> String {
         }
         if in_block {
             if line.trim() == KIMI_CONFIG_BLOCK_END {
+                in_block = false;
+            }
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+
+    if !removed_block {
+        return content.to_string();
+    }
+
+    let mut result = join_toml_lines(lines, trailing_newline);
+    while result.ends_with("\n\n") {
+        result.pop();
+    }
+    if result == "\n" {
+        String::new()
+    } else {
+        result
+    }
+}
+
+// Installs the shared delegation doctrine as a herdr-managed fenced block in
+// an agent's global markdown instructions file (claude/CLAUDE.md,
+// codex/AGENTS.md, opencode/AGENTS.md). Mirrors the kimi TOML config-block
+// pattern above: replace-on-reinstall, idempotent, and additive to any
+// existing file content.
+pub(crate) fn build_markdown_doctrine_block(content: &str) -> String {
+    let mut result = remove_markdown_doctrine_block(content)
+        .trim_end_matches('\n')
+        .to_string();
+    if !result.is_empty() {
+        result.push('\n');
+        result.push('\n');
+    }
+
+    result.push_str(DOCTRINE_BLOCK_BEGIN);
+    result.push('\n');
+    result.push_str(DELEGATION_DOCTRINE.trim_end_matches('\n'));
+    result.push('\n');
+    result.push_str(DOCTRINE_BLOCK_END);
+    result.push('\n');
+    result
+}
+
+pub(crate) fn remove_markdown_doctrine_block(content: &str) -> String {
+    let trailing_newline = content.ends_with('\n');
+    let mut lines = Vec::new();
+    let mut in_block = false;
+    let mut removed_block = false;
+
+    for line in content.lines() {
+        if line.trim() == DOCTRINE_BLOCK_BEGIN {
+            in_block = true;
+            removed_block = true;
+            continue;
+        }
+        if in_block {
+            if line.trim() == DOCTRINE_BLOCK_END {
                 in_block = false;
             }
             continue;

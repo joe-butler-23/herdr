@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 
 use super::command::{hook_command, shell_single_quote};
 use super::config_edit::{
-    build_codex_config_with_hooks, build_kimi_config_with_hooks, ensure_command_hook,
-    ensure_direct_command_hook, ensure_hermes_plugin_enabled, ensure_hooks_object,
-    ensure_simple_command_hook, hooks_object_if_present, remove_direct_hook_commands,
-    remove_hermes_plugin_enabled, remove_hook_commands, remove_kimi_config_block,
-    remove_simple_command_hook,
+    build_codex_config_with_hooks, build_kimi_config_with_hooks, build_markdown_doctrine_block,
+    ensure_command_hook, ensure_direct_command_hook, ensure_hermes_plugin_enabled,
+    ensure_hooks_object, ensure_simple_command_hook, hooks_object_if_present,
+    remove_direct_hook_commands, remove_hermes_plugin_enabled, remove_hook_commands,
+    remove_kimi_config_block, remove_markdown_doctrine_block, remove_simple_command_hook,
 };
 use super::env::{
     claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir, hermes_dir,
@@ -173,9 +173,21 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
 
     fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
+    let doctrine_path = dir.join("CLAUDE.md");
+    let existing_doctrine = if doctrine_path.is_file() {
+        fs::read_to_string(&doctrine_path)?
+    } else {
+        String::new()
+    };
+    let new_doctrine = build_markdown_doctrine_block(&existing_doctrine);
+    if new_doctrine != existing_doctrine {
+        fs::write(&doctrine_path, new_doctrine)?;
+    }
+
     Ok(ClaudeInstallPaths {
         hook_path,
         settings_path,
+        doctrine_path,
     })
 }
 
@@ -251,10 +263,22 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
         fs::write(&config_path, new_config)?;
     }
 
+    let doctrine_path = dir.join("AGENTS.md");
+    let existing_doctrine = if doctrine_path.is_file() {
+        fs::read_to_string(&doctrine_path)?
+    } else {
+        String::new()
+    };
+    let new_doctrine = build_markdown_doctrine_block(&existing_doctrine);
+    if new_doctrine != existing_doctrine {
+        fs::write(&doctrine_path, new_doctrine)?;
+    }
+
     Ok(CodexInstallPaths {
         hook_path,
         hooks_path,
         config_path,
+        doctrine_path,
     })
 }
 
@@ -507,7 +531,21 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
     let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
     fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
 
-    Ok(OpenCodeInstallPaths { plugin_path })
+    let doctrine_path = dir.join("AGENTS.md");
+    let existing_doctrine = if doctrine_path.is_file() {
+        fs::read_to_string(&doctrine_path)?
+    } else {
+        String::new()
+    };
+    let new_doctrine = build_markdown_doctrine_block(&existing_doctrine);
+    if new_doctrine != existing_doctrine {
+        fs::write(&doctrine_path, new_doctrine)?;
+    }
+
+    Ok(OpenCodeInstallPaths {
+        plugin_path,
+        doctrine_path,
+    })
 }
 
 pub(crate) fn install_kilo() -> io::Result<KiloInstallPaths> {
@@ -637,11 +675,24 @@ pub(crate) fn uninstall_claude() -> io::Result<ClaudeUninstallResult> {
     let removed_hook_file =
         remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
 
+    let doctrine_path = claude_dir()?.join("CLAUDE.md");
+    let mut updated_doctrine = false;
+    if doctrine_path.is_file() {
+        let existing_doctrine = fs::read_to_string(&doctrine_path)?;
+        let new_doctrine = remove_markdown_doctrine_block(&existing_doctrine);
+        if new_doctrine != existing_doctrine {
+            fs::write(&doctrine_path, new_doctrine)?;
+            updated_doctrine = true;
+        }
+    }
+
     Ok(ClaudeUninstallResult {
         hook_path,
         settings_path,
+        doctrine_path,
         removed_hook_file,
         updated_settings,
+        updated_doctrine,
     })
 }
 
@@ -687,12 +738,25 @@ pub(crate) fn uninstall_codex() -> io::Result<CodexUninstallResult> {
     let removed_hook_file =
         remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
 
+    let doctrine_path = codex_dir.join("AGENTS.md");
+    let mut updated_doctrine = false;
+    if doctrine_path.is_file() {
+        let existing_doctrine = fs::read_to_string(&doctrine_path)?;
+        let new_doctrine = remove_markdown_doctrine_block(&existing_doctrine);
+        if new_doctrine != existing_doctrine {
+            fs::write(&doctrine_path, new_doctrine)?;
+            updated_doctrine = true;
+        }
+    }
+
     Ok(CodexUninstallResult {
         hook_path,
         hooks_path,
         config_path,
+        doctrine_path,
         removed_hook_file,
         updated_hooks,
+        updated_doctrine,
     })
 }
 
@@ -887,14 +951,26 @@ pub(crate) fn uninstall_droid() -> io::Result<DroidUninstallResult> {
 }
 
 pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
-    let plugin_path = opencode_dir()?
-        .join("plugins")
-        .join(OPENCODE_PLUGIN_INSTALL_NAME);
+    let dir = opencode_dir()?;
+    let plugin_path = dir.join("plugins").join(OPENCODE_PLUGIN_INSTALL_NAME);
     let removed_plugin = remove_file_if_exists(&plugin_path)?;
+
+    let doctrine_path = dir.join("AGENTS.md");
+    let mut updated_doctrine = false;
+    if doctrine_path.is_file() {
+        let existing_doctrine = fs::read_to_string(&doctrine_path)?;
+        let new_doctrine = remove_markdown_doctrine_block(&existing_doctrine);
+        if new_doctrine != existing_doctrine {
+            fs::write(&doctrine_path, new_doctrine)?;
+            updated_doctrine = true;
+        }
+    }
 
     Ok(OpenCodeUninstallResult {
         plugin_path,
+        doctrine_path,
         removed_plugin,
+        updated_doctrine,
     })
 }
 

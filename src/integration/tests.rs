@@ -975,7 +975,7 @@ fn claude_v1_integration_status_is_outdated() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(1));
-    assert_eq!(claude.expected_version, 8);
+    assert_eq!(claude.expected_version, 9);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1005,7 +1005,7 @@ fn claude_v2_integration_status_is_outdated() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(2));
-    assert_eq!(claude.expected_version, 8);
+    assert_eq!(claude.expected_version, 9);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1116,6 +1116,83 @@ fn install_claude_errors_when_claude_dir_missing() {
 }
 
 #[test]
+fn install_claude_writes_doctrine_block_and_creates_file_if_absent() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let installed = install_claude().unwrap();
+    let doctrine = fs::read_to_string(&installed.doctrine_path).unwrap();
+
+    assert_eq!(installed.doctrine_path, claude_dir.join("CLAUDE.md"));
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(doctrine.contains(DELEGATION_DOCTRINE.trim_end_matches('\n')));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_claude_doctrine_block_is_idempotent_and_preserves_user_content() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(
+        claude_dir.join("CLAUDE.md"),
+        "# my project notes\n\nkeep this.\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    install_claude().unwrap();
+    install_claude().unwrap();
+
+    let doctrine = fs::read_to_string(claude_dir.join("CLAUDE.md")).unwrap();
+
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(doctrine.contains("# my project notes"));
+    assert!(doctrine.contains("keep this."));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn uninstall_claude_removes_doctrine_block_preserves_other_content() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(
+        claude_dir.join("CLAUDE.md"),
+        "# my project notes\n\nkeep this.\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    install_claude().unwrap();
+    let result = uninstall_claude().unwrap();
+    let doctrine = fs::read_to_string(&result.doctrine_path).unwrap();
+
+    assert!(result.updated_doctrine);
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_BEGIN));
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_END));
+    assert!(doctrine.contains("# my project notes"));
+    assert!(doctrine.contains("keep this."));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
 fn codex_v2_integration_status_is_outdated() {
     let _lock = integration_env_lock();
     let base = unique_base();
@@ -1138,7 +1215,7 @@ fn codex_v2_integration_status_is_outdated() {
 
     assert_eq!(codex.path, hook_path);
     assert_eq!(codex.installed_version, Some(2));
-    assert_eq!(codex.expected_version, 8);
+    assert_eq!(codex.expected_version, 9);
     assert_eq!(codex.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1351,6 +1428,99 @@ fn install_codex_errors_when_config_dir_missing() {
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_codex_writes_doctrine_block_and_creates_file_if_absent() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let installed = install_codex().unwrap();
+    let doctrine = fs::read_to_string(&installed.doctrine_path).unwrap();
+
+    assert_eq!(installed.doctrine_path, codex_dir.join("AGENTS.md"));
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(doctrine.contains(DELEGATION_DOCTRINE.trim_end_matches('\n')));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_codex_doctrine_block_is_idempotent_and_preserves_user_content() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).unwrap();
+    fs::write(
+        codex_dir.join("AGENTS.md"),
+        "# my codex notes\n\nkeep this.\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    install_codex().unwrap();
+    install_codex().unwrap();
+
+    let doctrine = fs::read_to_string(codex_dir.join("AGENTS.md")).unwrap();
+
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(doctrine.contains("# my codex notes"));
+    assert!(doctrine.contains("keep this."));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn uninstall_codex_removes_doctrine_block_preserves_other_content() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).unwrap();
+    fs::write(
+        codex_dir.join("AGENTS.md"),
+        "# my codex notes\n\nkeep this.\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    install_codex().unwrap();
+    let result = uninstall_codex().unwrap();
+    let doctrine = fs::read_to_string(&result.doctrine_path).unwrap();
+
+    assert!(result.updated_doctrine);
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_BEGIN));
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_END));
+    assert!(doctrine.contains("# my codex notes"));
+    assert!(doctrine.contains("keep this."));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn codex_hook_asset_empty_final_message_fallback_carries_marker_in_body() {
+    // The Stop hook falls back to a synthetic subject when the agent's turn
+    // produced no assistant text (e.g. a tool-only turn). The body used to be
+    // left empty in that case, so a reader looking only at the mail body saw
+    // nothing; both the shell and PowerShell hook assets must carry the same
+    // "(no message)" marker in the body, not just the subject.
+    assert!(CODEX_HOOK_ASSET.contains(r#"mail_subject = "done (no message)""#));
+    assert!(CODEX_HOOK_ASSET.contains(r#"mail_body = "(no message)""#));
+    assert!(!CODEX_HOOK_ASSET.contains(r#"mail_body = """#));
+
+    let ps1 = include_str!("assets/codex/herdr-agent-state.ps1");
+    assert!(ps1.contains(r#"$mailSubject = "done (no message)""#));
+    assert!(ps1.contains(r#"$mailBody = "(no message)""#));
 }
 
 #[test]
@@ -2169,6 +2339,83 @@ fn install_opencode_errors_when_config_dir_missing() {
     let err = install_opencode().unwrap_err().to_string();
 
     assert!(err.contains("opencode config directory not found"));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_writes_doctrine_block_and_creates_file_if_absent() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let installed = install_opencode().unwrap();
+    let doctrine = fs::read_to_string(&installed.doctrine_path).unwrap();
+
+    assert_eq!(installed.doctrine_path, opencode_dir.join("AGENTS.md"));
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(doctrine.contains(DELEGATION_DOCTRINE.trim_end_matches('\n')));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_doctrine_block_is_idempotent_and_preserves_user_content() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    fs::write(
+        opencode_dir.join("AGENTS.md"),
+        "# my opencode notes\n\nkeep this.\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    install_opencode().unwrap();
+    install_opencode().unwrap();
+
+    let doctrine = fs::read_to_string(opencode_dir.join("AGENTS.md")).unwrap();
+
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
+    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(doctrine.contains("# my opencode notes"));
+    assert!(doctrine.contains("keep this."));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn uninstall_opencode_removes_doctrine_block_preserves_other_content() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    fs::write(
+        opencode_dir.join("AGENTS.md"),
+        "# my opencode notes\n\nkeep this.\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    install_opencode().unwrap();
+    let result = uninstall_opencode().unwrap();
+    let doctrine = fs::read_to_string(&result.doctrine_path).unwrap();
+
+    assert!(result.updated_doctrine);
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_BEGIN));
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_END));
+    assert!(doctrine.contains("# my opencode notes"));
+    assert!(doctrine.contains("keep this."));
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
