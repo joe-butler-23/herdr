@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Added `herdr mail send`, `herdr mail wait`, `herdr mail read`, and `herdr mail list` for inter-agent message coordination via an in-memory message bus, avoiding token-expensive polling; messages are classified as `done`, `blocked`, `question`, or `info` with per-recipient inbox delivery and envelope/body separation.
+- Added `HERDR_PARENT_TERMINAL_ID` and `HERDR_PARENT_PANE_ID` environment variables automatically stamped into panes spawned with `herdr agent start --parent-pane` or `herdr pane split --parent-pane`, so workers can resolve their orchestrator without explicit configuration.
+- Added automatic mail delivery from Claude Code, Codex, and OpenCode integrations when spawned as delegated workers (with a parent pane); workers send `done` mail when their turn completes and `blocked` mail on permission waits.
 - Added `ui.sidebar_collapsed_mode = "hidden"` to make a collapsed sidebar use zero width while keeping the existing compact rail as the default. (#842)
 - Added `ui.focus_follows_mouse` to opt into focusing split panes when the mouse moves over them.
 - Added `herdr completion <shell>` / `herdr completions <shell>` to generate shell completion scripts for bash, elvish, fish, PowerShell, and zsh. (#435)

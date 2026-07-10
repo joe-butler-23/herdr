@@ -226,6 +226,40 @@ herdr workspace close 2
 herdr pane close 1-3
 ```
 
+## delegate to another agent (mail)
+
+spawn a worker pane and coordinate via the inter-agent message bus. mail is the preferred way to orchestrate workers because it avoids token-expensive polling: the orchestrator spawns once, sends the task, then blocks waiting on the worker's final message instead of repeatedly reading pane text.
+
+canonical delegation loop:
+
+```bash
+# spawn a worker pane with your pane as its parent
+NEW_PANE=$(herdr pane split 1-2 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+
+# start an agent in that pane (automatically sets parent context)
+herdr pane run "$NEW_PANE" "claude"
+
+# wait for it to be ready
+herdr wait output "$NEW_PANE" --match ">" --timeout 15000
+
+# send the task
+herdr pane run "$NEW_PANE" "research kubernetes operator patterns"
+
+# background the mail wait (if your harness supports background shell tasks)
+# to spend zero tokens while the worker runs
+herdr mail wait --timeout 120000 --from "$NEW_PANE" &
+
+# when you need the result, read just the envelope first
+ENVELOPE=$(herdr mail read <id> --from "$NEW_PANE")
+
+# read the full body only if body_bytes is worth the token cost
+herdr mail read <id> --from "$NEW_PANE" | jq .body
+```
+
+worker sends a reply by calling `herdr mail send parent --kind done --subject "..." --body-stdin` (resolve `parent` in the CLI from `HERDR_PARENT_TERMINAL_ID` or `HERDR_PARENT_PANE_ID`; the server has no notion of "parent").
+
+with the claude/codex/opencode integrations installed, delegated workers (panes spawned with a `--parent-pane`) automatically send `done` mail when their turn finishes and `blocked` mail when awaiting permission. standalone panes (no parent) never send automatic mail.
+
 ## recipes
 
 ### run a server and wait until it is ready
@@ -276,18 +310,23 @@ herdr pane split 1-2 --direction right --no-focus
 herdr pane run 1-3 "claude"
 herdr wait output 1-3 --match ">" --timeout 15000
 herdr pane run 1-3 "review the test coverage in src/api/"
+herdr mail wait --timeout 120000 --from 1-3
 ```
+
+the final `mail wait` blocks until the agent sends a `done` message (automatic with current integrations when the agent's turn completes). use this to coordinate with the agent without polling its screen.
 
 ### coordinate with another agent
 
+prefer the mail loop (above) to avoid polling. if you must check an agent's status screen-based, use `wait agent-status` as a fallback for panes without mail support, but note that `done` only reliably occurs when the pane is not being viewed; `idle` is the more stable completion signal when you are watching the pane in the active tab.
+
 ```bash
-herdr wait agent-status 1-1 --status done --timeout 120000
+herdr wait agent-status 1-1 --status idle --timeout 120000
 herdr pane read 1-1 --source recent --lines 100
 ```
 
 ## notes
 
-- `workspace list`, `workspace create`, `tab list`, `tab create`, `tab get`, `tab focus`, `tab rename`, `tab close`, `pane list`, `pane get`, `pane split`, `wait output`, and `wait agent-status` print json on success.
+- `workspace list`, `workspace create`, `tab list`, `tab create`, `tab get`, `tab focus`, `tab rename`, `tab close`, `pane list`, `pane get`, `pane split`, `wait output`, `wait agent-status`, `mail send`, `mail wait`, `mail read`, and `mail list` print json on success.
 - `pane read` prints text, not json.
 - `pane read --format ansi` or `pane read --ansi` returns a rendered ANSI snapshot for TUI feedback loops.
 - `pane read --source recent-unwrapped` is useful when you want to inspect the same unwrapped transcript that `wait output --source recent` matches against.
