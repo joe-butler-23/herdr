@@ -167,6 +167,11 @@ impl App {
                     context.focused_pane_id = Some(pane_id.clone());
                     context
                 }),
+            // Unreachable in practice: `MailReceived` isn't in
+            // `PLUGIN_HOOK_EVENT_KINDS`, so `run_plugin_event_hooks` returns
+            // before ever calling this method for a mail event. Kept for
+            // match exhaustiveness.
+            EventData::MailReceived { .. } => empty_plugin_context(correlation_id),
         }
     }
 

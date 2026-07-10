@@ -13,6 +13,7 @@ mod config_io;
 mod creation;
 mod ids;
 mod input;
+mod mail_store;
 mod runtime;
 mod runtime_mutations;
 mod session;
@@ -647,6 +648,7 @@ impl App {
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
+            mail_inboxes: std::collections::HashMap::new(),
             global_menu: state::MenuListState::new(0),
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             session_dirty: false,
@@ -3590,6 +3592,7 @@ mod tests {
                 cwd: None,
                 focus: false,
                 env: Default::default(),
+                parent_pane_id: None,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -3670,6 +3673,7 @@ mod tests {
                 cwd: None,
                 focus: true,
                 env: Default::default(),
+                parent_pane_id: None,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -3716,6 +3720,7 @@ mod tests {
                 cwd: None,
                 focus: false,
                 env: Default::default(),
+                parent_pane_id: None,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -3762,6 +3767,7 @@ mod tests {
                 cwd: None,
                 focus: false,
                 env: Default::default(),
+                parent_pane_id: None,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -3804,6 +3810,7 @@ mod tests {
                 focus: true,
                 argv: vec![exiting_test_command().into()],
                 env: Default::default(),
+                parent_pane_id: None,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();

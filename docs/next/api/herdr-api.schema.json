@@ -636,33 +636,141 @@
                 "agent_status"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "envelope": {
+                  "$ref": "#/schemas/event/$defs/MailEnvelope"
+                },
+                "type": {
+                  "const": "mail_received",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "envelope"
+              ],
+              "type": "object"
             }
           ]
         },
         "EventKind": {
+          "oneOf": [
+            {
+              "enum": [
+                "workspace_created",
+                "workspace_updated",
+                "workspace_closed",
+                "workspace_renamed",
+                "workspace_moved",
+                "workspace_focused",
+                "worktree_created",
+                "worktree_opened",
+                "worktree_removed",
+                "tab_created",
+                "tab_closed",
+                "tab_renamed",
+                "tab_moved",
+                "tab_focused",
+                "pane_created",
+                "pane_closed",
+                "pane_focused",
+                "pane_moved",
+                "pane_output_changed",
+                "pane_exited",
+                "pane_agent_detected",
+                "pane_agent_status_changed"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "mail_received",
+              "description": "A mail message landed in a recipient inbox. Not gated through\n`PLUGIN_HOOK_EVENT_KINDS` (no plugin hook use case yet) — this exists\npurely so a future `events.subscribe`-based UI can badge inboxes\nwithout polling. `mail.wait` remains the real-time mail primitive.",
+              "type": "string"
+            }
+          ]
+        },
+        "MailEnvelope": {
+          "description": "Envelope-only view of a mail message: everything EXCEPT the body.\nReturned by `mail.wait` and `mail.list`.",
+          "properties": {
+            "body_bytes": {
+              "description": "Byte length of the (possibly truncated) stored body — lets a caller\ndecide whether `mail.read` is worth the token cost before calling it.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "body_truncated": {
+              "description": "True if the stored body was truncated at the 64KB cap.",
+              "type": "boolean"
+            },
+            "from_agent": {
+              "description": "Sender agent label, e.g. \"claude\", \"codex\", \"opencode\", or a hook's\n`source` string when not one of those. Best-effort, may be absent for\nsends via `herdr mail send` with no agent context.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_pane_id": {
+              "description": "Sender's best-known public pane id at send time (may go stale if the\nsender pane later closes/compacts; kept for human-readable display\nonly, never used to resolve identity).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_terminal_id": {
+              "description": "Sender's durable terminal id, stringified (`TerminalId::to_string()`).\nBest-effort: `None` when the sender's self-reported `from_pane_id`\ndidn't resolve to a live terminal (sending mail must never fail just\nbecause the sender's own identity is stale).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "Monotonic, per-recipient-inbox message id (1-based, never reused).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/schemas/event/$defs/MailKind"
+            },
+            "read": {
+              "type": "boolean"
+            },
+            "seq": {
+              "description": "Server-assigned monotonic delivery sequence (ns-resolution wall clock\nat store time, ties broken by `id`). Use for display ordering; `id`\nis the authoritative per-inbox ordering key.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "subject": {
+              "description": "Capped to 120 chars server-side at send time.",
+              "type": "string"
+            },
+            "to_terminal_id": {
+              "description": "Recipient terminal id, stringified. Always resolvable (it's the\nactual recipient the message was stored under).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "to_terminal_id",
+            "kind",
+            "subject",
+            "body_bytes",
+            "body_truncated",
+            "seq",
+            "read"
+          ],
+          "type": "object"
+        },
+        "MailKind": {
+          "description": "Message classification. Additive, non-exhaustive from the wire's\nperspective (new variants are additive; do not remove/rename existing\nones without a protocol version bump).",
           "enum": [
-            "workspace_created",
-            "workspace_updated",
-            "workspace_closed",
-            "workspace_renamed",
-            "workspace_moved",
-            "workspace_focused",
-            "worktree_created",
-            "worktree_opened",
-            "worktree_removed",
-            "tab_created",
-            "tab_closed",
-            "tab_renamed",
-            "tab_moved",
-            "tab_focused",
-            "pane_created",
-            "pane_closed",
-            "pane_focused",
-            "pane_moved",
-            "pane_output_changed",
-            "pane_exited",
-            "pane_agent_detected",
-            "pane_agent_status_changed"
+            "done",
+            "blocked",
+            "question",
+            "info"
           ],
           "type": "string"
         },
@@ -1033,6 +1141,13 @@
             },
             "name": {
               "type": "string"
+            },
+            "parent_pane_id": {
+              "description": "Caller's own public pane id (typically its `HERDR_PANE_ID`), so the\nspawned pane can be stamped with `HERDR_PARENT_TERMINAL_ID`/\n`HERDR_PARENT_PANE_ID` for mail routing back to it. Resolved\nserver-side to a durable terminal id at spawn time; resolution\nfailure is non-fatal (spawn proceeds without the parent env vars).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "split": {
               "anyOf": [
@@ -1708,6 +1823,109 @@
           ],
           "type": "object"
         },
+        "MailKind": {
+          "description": "Message classification. Additive, non-exhaustive from the wire's\nperspective (new variants are additive; do not remove/rename existing\nones without a protocol version bump).",
+          "enum": [
+            "done",
+            "blocked",
+            "question",
+            "info"
+          ],
+          "type": "string"
+        },
+        "MailListParams": {
+          "properties": {
+            "from": {
+              "description": "Whose inbox to list. Required — there is no calling-pane identity on\nthis socket API, so the CLI defaults it from `HERDR_PANE_ID`.",
+              "type": "string"
+            },
+            "unread_only": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "type": "object"
+        },
+        "MailReadParams": {
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from",
+            "id"
+          ],
+          "type": "object"
+        },
+        "MailSendParams": {
+          "properties": {
+            "body": {
+              "default": "",
+              "description": "Truncated server-side to `MAIL_BODY_MAX_BYTES` (64KB).",
+              "type": "string"
+            },
+            "from_agent": {
+              "description": "Sender agent label (e.g. `\"claude\"`/`\"codex\"`/`\"opencode\"`), set by\nhook callers. `None` for the plain CLI unless explicitly passed.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_pane_id": {
+              "description": "Sender's self-reported public pane id (e.g. from the sender's own\n`HERDR_PANE_ID`). Never trusted as authoritative identity — the\nserver independently resolves it to a `from_terminal_id`, and a\nfailed resolution never fails the send, only leaves provenance\nfields absent.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/schemas/request/$defs/MailKind"
+            },
+            "subject": {
+              "description": "Truncated server-side to 120 chars (UTF-8 char boundary safe).",
+              "type": "string"
+            },
+            "to": {
+              "description": "Recipient: pane id (`p_...`/`w-N`/`ws:pN`), agent name/label (via\n`resolve_terminal_target`), a raw terminal id, or the literal string\n`\"parent\"`. `\"parent\"` MUST already be resolved to a real pane id by\nthe CLI before this reaches the wire — the server has no notion of\n\"the caller's parent\"; if a client sends the literal string\n`\"parent\"` here the server treats it as a normal (and almost\ncertainly unresolvable) target string and returns\n`recipient_not_found`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "to",
+            "kind",
+            "subject"
+          ],
+          "type": "object"
+        },
+        "MailWaitParams": {
+          "properties": {
+            "from": {
+              "description": "Whose inbox to wait on. Required on the wire; the CLI defaults it\nfrom `HERDR_PANE_ID` when `--from` is omitted. Not defaulted\nserver-side because the server has no calling-pane identity.",
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "type": "object"
+        },
         "NotificationShowParams": {
           "properties": {
             "body": {
@@ -2373,6 +2591,13 @@
             "focus": {
               "default": false,
               "type": "boolean"
+            },
+            "parent_pane_id": {
+              "description": "Caller's own public pane id (typically its `HERDR_PANE_ID`), so the\nnew pane can be stamped with `HERDR_PARENT_TERMINAL_ID`/\n`HERDR_PARENT_PANE_ID` for mail routing back to it. Resolved\nserver-side to a durable terminal id at spawn time; resolution\nfailure is non-fatal (spawn proceeds without the parent env vars).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "ratio": {
               "format": "float",
@@ -4621,6 +4846,70 @@
         {
           "properties": {
             "method": {
+              "const": "mail.send",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MailSendParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mail.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MailListParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mail.read",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MailReadParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "mail.wait",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MailWaitParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "events.subscribe",
               "type": "string"
             },
@@ -5831,6 +6120,22 @@
                 "agent_status"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "envelope": {
+                  "$ref": "#/schemas/success_response/$defs/MailEnvelope"
+                },
+                "type": {
+                  "const": "mail_received",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "envelope"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -5850,31 +6155,40 @@
           "type": "object"
         },
         "EventKind": {
-          "enum": [
-            "workspace_created",
-            "workspace_updated",
-            "workspace_closed",
-            "workspace_renamed",
-            "workspace_moved",
-            "workspace_focused",
-            "worktree_created",
-            "worktree_opened",
-            "worktree_removed",
-            "tab_created",
-            "tab_closed",
-            "tab_renamed",
-            "tab_moved",
-            "tab_focused",
-            "pane_created",
-            "pane_closed",
-            "pane_focused",
-            "pane_moved",
-            "pane_output_changed",
-            "pane_exited",
-            "pane_agent_detected",
-            "pane_agent_status_changed"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "workspace_created",
+                "workspace_updated",
+                "workspace_closed",
+                "workspace_renamed",
+                "workspace_moved",
+                "workspace_focused",
+                "worktree_created",
+                "worktree_opened",
+                "worktree_removed",
+                "tab_created",
+                "tab_closed",
+                "tab_renamed",
+                "tab_moved",
+                "tab_focused",
+                "pane_created",
+                "pane_closed",
+                "pane_focused",
+                "pane_moved",
+                "pane_output_changed",
+                "pane_exited",
+                "pane_agent_detected",
+                "pane_agent_status_changed"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "mail_received",
+              "description": "A mail message landed in a recipient inbox. Not gated through\n`PLUGIN_HOOK_EVENT_KINDS` (no plugin hook use case yet) — this exists\npurely so a future `events.subscribe`-based UI can badge inboxes\nwithout polling. `mail.wait` remains the real-time mail primitive.",
+              "type": "string"
+            }
+          ]
         },
         "HostCloseAction": {
           "enum": [
@@ -6171,6 +6485,167 @@
               "type": "object"
             }
           ]
+        },
+        "MailEnvelope": {
+          "description": "Envelope-only view of a mail message: everything EXCEPT the body.\nReturned by `mail.wait` and `mail.list`.",
+          "properties": {
+            "body_bytes": {
+              "description": "Byte length of the (possibly truncated) stored body — lets a caller\ndecide whether `mail.read` is worth the token cost before calling it.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "body_truncated": {
+              "description": "True if the stored body was truncated at the 64KB cap.",
+              "type": "boolean"
+            },
+            "from_agent": {
+              "description": "Sender agent label, e.g. \"claude\", \"codex\", \"opencode\", or a hook's\n`source` string when not one of those. Best-effort, may be absent for\nsends via `herdr mail send` with no agent context.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_pane_id": {
+              "description": "Sender's best-known public pane id at send time (may go stale if the\nsender pane later closes/compacts; kept for human-readable display\nonly, never used to resolve identity).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_terminal_id": {
+              "description": "Sender's durable terminal id, stringified (`TerminalId::to_string()`).\nBest-effort: `None` when the sender's self-reported `from_pane_id`\ndidn't resolve to a live terminal (sending mail must never fail just\nbecause the sender's own identity is stale).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "Monotonic, per-recipient-inbox message id (1-based, never reused).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/schemas/success_response/$defs/MailKind"
+            },
+            "read": {
+              "type": "boolean"
+            },
+            "seq": {
+              "description": "Server-assigned monotonic delivery sequence (ns-resolution wall clock\nat store time, ties broken by `id`). Use for display ordering; `id`\nis the authoritative per-inbox ordering key.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "subject": {
+              "description": "Capped to 120 chars server-side at send time.",
+              "type": "string"
+            },
+            "to_terminal_id": {
+              "description": "Recipient terminal id, stringified. Always resolvable (it's the\nactual recipient the message was stored under).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "to_terminal_id",
+            "kind",
+            "subject",
+            "body_bytes",
+            "body_truncated",
+            "seq",
+            "read"
+          ],
+          "type": "object"
+        },
+        "MailKind": {
+          "description": "Message classification. Additive, non-exhaustive from the wire's\nperspective (new variants are additive; do not remove/rename existing\nones without a protocol version bump).",
+          "enum": [
+            "done",
+            "blocked",
+            "question",
+            "info"
+          ],
+          "type": "string"
+        },
+        "MailMessage": {
+          "description": "Full message including body. Returned only by `mail.read`.",
+          "properties": {
+            "body": {
+              "description": "Capped to 64KB (`MAIL_BODY_MAX_BYTES`); truncated bodies get a\ntrailing marker appended and `envelope.body_truncated = true`.",
+              "type": "string"
+            },
+            "body_bytes": {
+              "description": "Byte length of the (possibly truncated) stored body — lets a caller\ndecide whether `mail.read` is worth the token cost before calling it.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "body_truncated": {
+              "description": "True if the stored body was truncated at the 64KB cap.",
+              "type": "boolean"
+            },
+            "from_agent": {
+              "description": "Sender agent label, e.g. \"claude\", \"codex\", \"opencode\", or a hook's\n`source` string when not one of those. Best-effort, may be absent for\nsends via `herdr mail send` with no agent context.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_pane_id": {
+              "description": "Sender's best-known public pane id at send time (may go stale if the\nsender pane later closes/compacts; kept for human-readable display\nonly, never used to resolve identity).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_terminal_id": {
+              "description": "Sender's durable terminal id, stringified (`TerminalId::to_string()`).\nBest-effort: `None` when the sender's self-reported `from_pane_id`\ndidn't resolve to a live terminal (sending mail must never fail just\nbecause the sender's own identity is stale).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "Monotonic, per-recipient-inbox message id (1-based, never reused).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/schemas/success_response/$defs/MailKind"
+            },
+            "read": {
+              "type": "boolean"
+            },
+            "seq": {
+              "description": "Server-assigned monotonic delivery sequence (ns-resolution wall clock\nat store time, ties broken by `id`). Use for display ordering; `id`\nis the authoritative per-inbox ordering key.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "subject": {
+              "description": "Capped to 120 chars server-side at send time.",
+              "type": "string"
+            },
+            "to_terminal_id": {
+              "description": "Recipient terminal id, stringified. Always resolvable (it's the\nactual recipient the message was stored under).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "to_terminal_id",
+            "kind",
+            "subject",
+            "body_bytes",
+            "body_truncated",
+            "seq",
+            "read",
+            "body"
+          ],
+          "type": "object"
         },
         "NotificationShowReason": {
           "enum": [
@@ -8443,6 +8918,73 @@
                 "type",
                 "status",
                 "diagnostics"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "envelope": {
+                  "$ref": "#/schemas/success_response/$defs/MailEnvelope"
+                },
+                "type": {
+                  "const": "mail_sent",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "envelope"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "messages": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/MailEnvelope"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "mail_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "messages"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "message": {
+                  "$ref": "#/schemas/success_response/$defs/MailMessage"
+                },
+                "type": {
+                  "const": "mail_read",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "envelope": {
+                  "$ref": "#/schemas/success_response/$defs/MailEnvelope"
+                },
+                "type": {
+                  "const": "mail_wait_matched",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "envelope"
               ],
               "type": "object"
             },

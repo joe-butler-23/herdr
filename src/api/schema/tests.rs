@@ -1098,3 +1098,105 @@ fn plugin_pane_open_request_round_trips() {
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
 }
+
+#[test]
+fn request_round_trips_for_mail_send() {
+    let request = Request {
+        id: "req_mail_send".into(),
+        method: Method::MailSend(MailSendParams {
+            to: "p_1_3".into(),
+            kind: MailKind::Done,
+            subject: "tests green, ready for review".into(),
+            body: "Ran the full suite; 412 passed.".into(),
+            from_pane_id: Some("p_1_5".into()),
+            from_agent: Some("claude".into()),
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "mail.send");
+    assert_eq!(json["params"]["kind"], "done");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn request_round_trips_for_mail_list() {
+    let request = Request {
+        id: "req_mail_list".into(),
+        method: Method::MailList(MailListParams {
+            from: "p_1_5".into(),
+            unread_only: true,
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "mail.list");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn request_round_trips_for_mail_read() {
+    let request = Request {
+        id: "req_mail_read".into(),
+        method: Method::MailRead(MailReadParams {
+            from: "p_1_5".into(),
+            id: 7,
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "mail.read");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn request_round_trips_for_mail_wait() {
+    let request = Request {
+        id: "req_mail_wait".into(),
+        method: Method::MailWait(MailWaitParams {
+            from: "p_1_5".into(),
+            timeout_ms: Some(900_000),
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "mail.wait");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn mail_envelope_and_message_round_trip_with_optional_provenance_absent() {
+    let envelope = MailEnvelope {
+        id: 1,
+        from_terminal_id: None,
+        from_pane_id: None,
+        from_agent: None,
+        to_terminal_id: "term_1".into(),
+        kind: MailKind::Info,
+        subject: "subject".into(),
+        body_bytes: 4,
+        body_truncated: false,
+        seq: 42,
+        read: false,
+    };
+    let json = serde_json::to_value(&envelope).unwrap();
+    assert!(json.get("from_terminal_id").is_none());
+    let restored: MailEnvelope = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, envelope);
+
+    let message = MailMessage {
+        envelope: envelope.clone(),
+        body: "body".into(),
+    };
+    let message_json = serde_json::to_value(&message).unwrap();
+    // `#[serde(flatten)]` means the envelope's fields sit alongside `body`,
+    // not nested under an `envelope` key.
+    assert_eq!(message_json["id"], 1);
+    assert_eq!(message_json["body"], "body");
+    let restored_message: MailMessage = serde_json::from_value(message_json).unwrap();
+    assert_eq!(restored_message, message);
+}

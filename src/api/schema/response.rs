@@ -7,6 +7,7 @@ use super::host::{HostCloseResult, HostNavigateResult, HostPrepareEntryResult};
 use super::integrations::{
     IntegrationInstallResult, IntegrationTarget, IntegrationUninstallResult,
 };
+use super::mail::{MailEnvelope, MailMessage};
 use super::panes::{
     LayoutDescription, PaneEdgesResult, PaneFocusDirectionResult, PaneInfo, PaneLayoutSnapshot,
     PaneMoveResult, PaneNeighborResult, PaneProcessInfo, PaneReadResult, PaneResizeResult,
@@ -240,6 +241,18 @@ pub enum ResponseResult {
     ConfigReload {
         status: crate::config::ConfigReloadStatus,
         diagnostics: Vec<String>,
+    },
+    MailSent {
+        envelope: MailEnvelope,
+    },
+    MailList {
+        messages: Vec<MailEnvelope>,
+    },
+    MailRead {
+        message: MailMessage,
+    },
+    MailWaitMatched {
+        envelope: MailEnvelope,
     },
     Ok {},
 }

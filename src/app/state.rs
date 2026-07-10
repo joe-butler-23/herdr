@@ -1436,6 +1436,11 @@ pub struct AppState {
     pub(crate) plugin_command_logs: Vec<crate::api::schema::PluginCommandLogInfo>,
     pub(crate) next_plugin_command_log_id: u64,
     pub(crate) plugin_commands_in_flight: usize,
+    /// Per-recipient mail inboxes, keyed by durable terminal id (survives
+    /// pane-id compaction). Transient, in-memory only — not persisted across
+    /// server restarts, matching EventHub.
+    pub(crate) mail_inboxes:
+        std::collections::HashMap<crate::terminal::TerminalId, crate::app::mail_store::MailInbox>,
     /// Highlight state for the bottom-right global launcher menu.
     pub global_menu: MenuListState,
     /// Resolved host terminal default colors for theming embedded panes.
@@ -1876,6 +1881,7 @@ impl AppState {
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
+            mail_inboxes: std::collections::HashMap::new(),
             global_menu: MenuListState::new(0),
             host_terminal_theme: TerminalTheme::default(),
             session_dirty: false,

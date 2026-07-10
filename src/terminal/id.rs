@@ -20,6 +20,14 @@ impl TerminalId {
         let counter = NEXT_TERMINAL_ID.fetch_add(1, Ordering::Relaxed);
         Self(format!("term_{micros:x}{counter:x}"))
     }
+
+    /// Construct a `TerminalId` from an already-known raw string, e.g. one
+    /// round-tripped through `TerminalId::to_string()` or supplied verbatim
+    /// by a caller. Does not validate the terminal actually exists —
+    /// callers must check `AppState.terminals` themselves.
+    pub(crate) fn from_raw(id: String) -> Self {
+        Self(id)
+    }
 }
 
 impl fmt::Display for TerminalId {

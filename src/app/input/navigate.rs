@@ -481,6 +481,7 @@ impl App {
                 cwd: None,
                 focus: true,
                 env: Default::default(),
+                parent_pane_id: None,
             }),
         );
     }

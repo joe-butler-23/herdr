@@ -6,6 +6,7 @@ mod env;
 mod host;
 mod integrations;
 mod layouts;
+mod mail;
 mod panes;
 pub(crate) mod plugins;
 mod responses;
@@ -1008,6 +1009,23 @@ impl App {
             }
             Method::PluginPaneClose(params) => {
                 return self.handle_plugin_pane_close(request.id, params);
+            }
+            Method::MailSend(params) => return self.handle_mail_send(request.id, params),
+            Method::MailList(params) => return self.handle_mail_list(request.id, params),
+            Method::MailRead(params) => return self.handle_mail_read(request.id, params),
+            Method::MailWait(_) => {
+                // Unreachable in practice: server.rs::handle_connection
+                // intercepts mail.wait before it ever reaches dispatch,
+                // mirroring how Method::PaneWaitForOutput never appears in
+                // this match today. Kept as an explicit arm (rather than
+                // falling through to the generic wildcard below) so a future
+                // misrouted/recursive dispatch fails loudly with a specific
+                // message instead of a generic "not_implemented".
+                return responses::encode_error(
+                    request.id,
+                    "internal_error",
+                    "mail.wait must be issued as a top-level request, not dispatched",
+                );
             }
             _ => {
                 return responses::encode_error(

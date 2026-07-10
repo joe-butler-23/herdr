@@ -5,8 +5,8 @@ use regex::Regex;
 
 use crate::api::schema::{
     ErrorBody, ErrorResponse, EventData, EventEnvelope, EventKind, EventMatch, EventsWaitParams,
-    Method, Request, ResponseResult, Subscription, SubscriptionEventData,
-    SubscriptionEventEnvelope, SuccessResponse,
+    MailEnvelope, MailListParams, MailWaitParams, Method, Request, ResponseResult, Subscription,
+    SubscriptionEventData, SubscriptionEventEnvelope, SuccessResponse,
 };
 use crate::api::server::{
     dispatch_to_app_with_timeout, should_stop_connection, APP_RESPONSE_TIMEOUT,
@@ -116,6 +116,86 @@ pub(super) fn wait_for_output(
                     error: ErrorBody {
                         code: "timeout".into(),
                         message: "timed out waiting for output match".into(),
+                    },
+                })
+                .unwrap(),
+            ));
+        }
+
+        std::thread::sleep(CONNECTION_POLL_INTERVAL);
+    }
+}
+
+/// Blocking wait for mail. Reuses `Method::MailList { unread_only: true }`
+/// as the poll primitive (no bespoke peek method — mirrors
+/// `wait_for_output` re-dispatching `Method::PaneRead` each tick) and takes
+/// the lowest-id (oldest) unread envelope, without marking anything read.
+pub(super) fn wait_for_mail(
+    request_id: String,
+    params: MailWaitParams,
+    stream: &mut LocalStream,
+    api_tx: &ApiRequestSender,
+    running: &Arc<AtomicBool>,
+) -> std::io::Result<Option<String>> {
+    let deadline = params
+        .timeout_ms
+        .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+    let list_params = MailListParams {
+        from: params.from,
+        unread_only: true,
+    };
+
+    loop {
+        if should_stop_connection(stream, running)? {
+            return Ok(None);
+        }
+
+        let list_request = Request {
+            id: format!("{request_id}:list"),
+            method: Method::MailList(list_params.clone()),
+        };
+        let response =
+            dispatch_to_app_with_timeout(list_request, api_tx, Some(APP_RESPONSE_TIMEOUT));
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
+            return Ok(Some(response));
+        };
+        if value.get("error").is_some() {
+            let mut value = value;
+            value["id"] = serde_json::Value::String(request_id.clone());
+            return Ok(Some(serde_json::to_string(&value).unwrap()));
+        }
+
+        let messages_value = value["result"]["messages"].clone();
+        let Ok(messages) = serde_json::from_value::<Vec<MailEnvelope>>(messages_value) else {
+            return Ok(Some(
+                serde_json::to_string(&ErrorResponse {
+                    id: request_id,
+                    error: ErrorBody {
+                        code: "internal_error".into(),
+                        message: "failed to decode mail list result".into(),
+                    },
+                })
+                .unwrap(),
+            ));
+        };
+
+        if let Some(envelope) = messages.into_iter().next() {
+            return Ok(Some(
+                serde_json::to_string(&SuccessResponse {
+                    id: request_id,
+                    result: ResponseResult::MailWaitMatched { envelope },
+                })
+                .unwrap(),
+            ));
+        }
+
+        if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            return Ok(Some(
+                serde_json::to_string(&ErrorResponse {
+                    id: request_id,
+                    error: ErrorBody {
+                        code: "timeout".into(),
+                        message: "timed out waiting for mail".into(),
                     },
                 })
                 .unwrap(),

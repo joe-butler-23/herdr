@@ -20,6 +20,13 @@ pub struct PaneSplitParams {
     pub focus: bool,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env: HashMap<String, String>,
+    /// Caller's own public pane id (typically its `HERDR_PANE_ID`), so the
+    /// new pane can be stamped with `HERDR_PARENT_TERMINAL_ID`/
+    /// `HERDR_PARENT_PANE_ID` for mail routing back to it. Resolved
+    /// server-side to a durable terminal id at spawn time; resolution
+    /// failure is non-fatal (spawn proceeds without the parent env vars).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_pane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

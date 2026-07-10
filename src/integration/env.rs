@@ -8,6 +8,13 @@ use portable_pty::CommandBuilder;
 pub(crate) const HERDR_PANE_ID_ENV_VAR: &str = "HERDR_PANE_ID";
 pub(crate) const HERDR_TAB_ID_ENV_VAR: &str = "HERDR_TAB_ID";
 pub(crate) const HERDR_WORKSPACE_ID_ENV_VAR: &str = "HERDR_WORKSPACE_ID";
+/// Authoritative for mail routing: the parent pane's durable terminal id,
+/// resolved server-side at spawn time (SPEC-AMENDMENTS A1).
+pub(crate) const HERDR_PARENT_TERMINAL_ID_ENV_VAR: &str = "HERDR_PARENT_TERMINAL_ID";
+/// Display/debug convenience only — the parent's public pane id as supplied
+/// by the spawning client, not re-validated. Prefer
+/// `HERDR_PARENT_TERMINAL_ID_ENV_VAR` for mail routing.
+pub(crate) const HERDR_PARENT_PANE_ID_ENV_VAR: &str = "HERDR_PARENT_PANE_ID";
 
 pub(crate) const PI_CODING_AGENT_DIR_ENV_VAR: &str = "PI_CODING_AGENT_DIR";
 pub(crate) const CLAUDE_CONFIG_DIR_ENV_VAR: &str = "CLAUDE_CONFIG_DIR";

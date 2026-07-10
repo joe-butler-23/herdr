@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::common::{AgentStatus, ReadSource};
+use super::mail::MailEnvelope;
 use super::panes::{PaneInfo, PaneReadResult};
 use super::tabs::TabInfo;
 use super::workspaces::WorkspaceInfo;
@@ -204,6 +205,11 @@ pub enum EventKind {
     PaneExited,
     PaneAgentDetected,
     PaneAgentStatusChanged,
+    /// A mail message landed in a recipient inbox. Not gated through
+    /// `PLUGIN_HOOK_EVENT_KINDS` (no plugin hook use case yet) — this exists
+    /// purely so a future `events.subscribe`-based UI can badge inboxes
+    /// without polling. `mail.wait` remains the real-time mail primitive.
+    MailReceived,
 }
 
 impl EventKind {
@@ -231,6 +237,7 @@ impl EventKind {
             EventKind::PaneExited => "pane.exited",
             EventKind::PaneAgentDetected => "pane.agent_detected",
             EventKind::PaneAgentStatusChanged => "pane.agent_status_changed",
+            EventKind::MailReceived => "mail.received",
         }
     }
 }
@@ -501,5 +508,8 @@ pub enum EventData {
         custom_status: Option<String>,
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         state_labels: HashMap<String, String>,
+    },
+    MailReceived {
+        envelope: MailEnvelope,
     },
 }

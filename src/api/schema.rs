@@ -5,6 +5,7 @@ pub mod common;
 pub mod events;
 pub mod host;
 pub mod integrations;
+pub mod mail;
 pub mod panes;
 pub mod plugins;
 pub mod response;
@@ -19,6 +20,7 @@ pub use common::*;
 pub use events::*;
 pub use host::*;
 pub use integrations::*;
+pub use mail::*;
 pub use panes::*;
 pub use plugins::*;
 pub use response::*;
@@ -179,6 +181,14 @@ pub enum Method {
     PaneReleaseAgent(PaneReleaseAgentParams),
     #[serde(rename = "pane.close")]
     PaneClose(PaneTarget),
+    #[serde(rename = "mail.send")]
+    MailSend(MailSendParams),
+    #[serde(rename = "mail.list")]
+    MailList(MailListParams),
+    #[serde(rename = "mail.read")]
+    MailRead(MailReadParams),
+    #[serde(rename = "mail.wait")]
+    MailWait(MailWaitParams),
     #[serde(rename = "events.subscribe")]
     EventsSubscribe(EventsSubscribeParams),
     #[serde(rename = "events.wait")]

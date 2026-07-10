@@ -14,7 +14,7 @@ use crate::api::schema::{
     ErrorBody, ErrorResponse, Method, Request, ResponseResult, ServerCapabilities, SuccessResponse,
 };
 use crate::api::subscriptions::ActiveSubscription;
-use crate::api::wait::{wait_for_event, wait_for_output};
+use crate::api::wait::{wait_for_event, wait_for_mail, wait_for_output};
 use crate::api::{request_changes_ui, socket_path, ApiRequestMessage, ApiRequestSender, EventHub};
 use crate::ipc::{
     bind_local_listener, is_connection_closed_error, local_stream_peer_closed,
@@ -255,6 +255,32 @@ fn handle_connection(
             }
             result
         }
+        Method::MailWait(params) => {
+            let Some(response) =
+                wait_for_mail(request_id.clone(), params, &mut stream, api_tx, running)?
+            else {
+                crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    "client_disconnected",
+                    changes_ui,
+                );
+                return Ok(());
+            };
+            let result = write_text_line_allow_disconnect(&mut stream, &response);
+            match &result {
+                Ok(()) => crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    api_response_outcome(&response),
+                    changes_ui,
+                ),
+                Err(err) => {
+                    crate::logging::api_request_failed(&request_id, method, &err.to_string())
+                }
+            }
+            result
+        }
         method_body => {
             let response = handle_request(
                 Request {
@@ -372,6 +398,10 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::PaneClearAgentAuthority(_) => "pane.clear_agent_authority",
         Method::PaneReleaseAgent(_) => "pane.release_agent",
         Method::PaneClose(_) => "pane.close",
+        Method::MailSend(_) => "mail.send",
+        Method::MailList(_) => "mail.list",
+        Method::MailRead(_) => "mail.read",
+        Method::MailWait(_) => "mail.wait",
         Method::EventsSubscribe(_) => "events.subscribe",
         Method::EventsWait(_) => "events.wait",
         Method::PaneWaitForOutput(_) => "pane.wait_for_output",
