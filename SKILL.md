@@ -265,7 +265,12 @@ flag needed) and uses `--from <sender>` only to filter which sender's mail
 it is willing to match. this matters with more than one worker in flight:
 without `--from`, `mail wait` returns the oldest unread mail from ANY
 sender, so a wait aimed at one worker can be satisfied by a different
-worker's unrelated message.
+worker's unrelated message. `--from` matches the sender's terminal
+identity, not a display string — pass a pane id or terminal id for
+reliability; an agent-name filter (e.g. `--from codex`) only resolves
+correctly while that agent label is unambiguous (one live pane wearing
+it), so switch to pane/terminal id once more than one worker shares an
+agent name.
 
 there are two zero-token ways to wait for the result — pick whichever your
 harness supports, do not fall back to polling:
@@ -297,18 +302,29 @@ read <id>` for whatever woke you, or pass `--consume` on the wait itself.
 
 to message a worker that is still RUNNING (not at launch), use the typed
 channel instead: `herdr pane run <pane> "message"`. argv-as-prompt only
-works at spawn time.
+works at spawn time. that channel is for the orchestrator to reach a
+worker only — a worker must never `pane run`/`pane send-text` into its
+parent's pane (or any other pane) to reply or coordinate: that types the
+message in as fake user input to whatever is running there, it is not a
+mail delivery. a worker replies by mail, to the pane id shown in the
+envelope it was nudged with.
 
 worker sends a reply by calling `herdr mail send parent --kind done --subject "..." --body-stdin` (resolve `parent` in the CLI from `HERDR_PARENT_TERMINAL_ID` or `HERDR_PARENT_PANE_ID`; the server has no notion of "parent"). for an interim question or status while still working, send `--kind question|info` instead and then end the turn — the reply wakes the worker the same way completion wakes the orchestrator.
 
 with the claude/codex/opencode integrations installed, delegated workers
 (panes spawned with a parent context) automatically send `done` mail when
 their turn finishes and `blocked` mail when awaiting permission — a worker
-does not need to send its own `done` mail, ending the turn is enough.
-standalone panes (no parent) never send automatic mail. `herdr integration
-install` also installs this delegation doctrine into claude/codex/opencode's
-global instructions, so a worker running any of those agents already knows
-these rules without being told them in its task prompt.
+does not need to send its own `done` mail, ending the turn is enough. this
+fires at the end of EVERY turn, including a turn where the worker only
+asked a question or reported a block, so an orchestrator should expect an
+interim `done` mail that is not the real completion; judge completion by
+the mail's content, not just its `done` kind — the real completion mail
+arrives only after the orchestrator replies and the worker finishes its
+next turn. standalone panes (no parent) never send automatic mail. `herdr
+integration install` also installs this delegation doctrine into
+claude/codex/opencode's global instructions, so a worker running any of
+those agents already knows these rules without being told them in its
+task prompt.
 
 ## recipes
 

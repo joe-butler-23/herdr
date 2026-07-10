@@ -30,6 +30,17 @@ spawned by one, in a herdr-managed pane.
   moment the worker's mail arrives (queued while you are mid-turn, delivered
   the instant you go idle). never loop a foreground timeout wait, and never
   poll pane read/status to check on a worker.
+- a parented worker's hook auto-mails `done` at the end of EVERY turn,
+  including a turn where it only asked you a question or reported it is
+  blocked — that `done` mail is not the real completion. judge completion
+  by the mail's content, not just its kind: an interim `done` still reads
+  like a question/status update, and the real completion mail arrives only
+  after you reply and the worker finishes its next turn.
+- `--from <worker>` filters by the sender's terminal identity, not a
+  display string — pass a pane id or terminal id for reliability. an
+  agent-name filter (e.g. `--from codex`) only resolves correctly while
+  that agent label is unambiguous (one live pane wearing it); once more
+  than one worker shares an agent name, filter by pane/terminal id instead.
 - to send a follow-up to a worker that is still RUNNING, use the typed
   channel: `herdr pane run <pane> "message"`. argv only works at launch.
 - more than one worker in flight: either issue one `mail wait --from
@@ -50,6 +61,11 @@ you are a worker if `HERDR_PARENT_TERMINAL_ID` is set in your environment.
   `herdr mail send parent --kind question|info --subject "..." --body "..."`,
   then end your turn. the reply wakes you the same way completion wakes the
   orchestrator.
+- never `pane run`/`pane send-text` into your parent's pane or any other
+  pane to coordinate — that types the message in as if it were fake user
+  input to whatever is running there, it is not a mail delivery. reply by
+  mail to the pane id shown in the envelope you were nudged with:
+  `herdr mail send <from_pane_id> --kind info --subject "..." --body "..."`.
 - never poll your parent's panes, and never read sibling panes to
   coordinate. mail is the only channel.
 "#;
