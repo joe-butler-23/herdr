@@ -513,6 +513,7 @@ fn main() -> io::Result<()> {
         println!("       herdr tab <subcommand> ...");
         println!("       herdr notification <subcommand> ...");
         println!("       herdr agent <subcommand> ...");
+        println!("       herdr mail <subcommand> ...");
         println!("       herdr pane <subcommand> ...");
         println!("       herdr wait <subcommand> ...");
         println!("       herdr session <subcommand> ...");
@@ -567,6 +568,10 @@ fn main() -> io::Result<()> {
             (
                 "herdr agent <subcommand>",
                 "Agent/terminal helpers over the socket API",
+            ),
+            (
+                "herdr mail <subcommand>",
+                "Inter-pane mail helpers over the socket API",
             ),
             (
                 "herdr pane <subcommand>",

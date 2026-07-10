@@ -35,6 +35,7 @@ pub(super) fn command() -> Command {
         .subcommand(tab_command())
         .subcommand(notification_command())
         .subcommand(agent_command())
+        .subcommand(mail_command())
         .subcommand(pane_command())
         .subcommand(wait_command())
         .subcommand(terminal_command())
@@ -302,6 +303,7 @@ fn agent_command() -> Command {
                 .arg(option("tab", "ID"))
                 .arg(split_option())
                 .arg(env_option())
+                .arg(option("parent-pane", "ID"))
                 .arg(flag("focus"))
                 .arg(flag("no-focus")),
         )
@@ -320,6 +322,45 @@ fn agent_command() -> Command {
                         .action(ArgAction::SetTrue),
                 ),
         )
+}
+
+fn mail_command() -> Command {
+    Command::new("mail")
+        .about("Send and receive inter-pane mail messages")
+        .subcommand(
+            Command::new("send")
+                .about("Send a mail message to a pane, agent, terminal id, or 'parent'")
+                .arg(required("to", "TO"))
+                .arg(mail_kind_option("kind", true))
+                .arg(option("subject", "TEXT").required(true))
+                .arg(option("body", "TEXT"))
+                .arg(path_option("body-file", "PATH"))
+                .arg(flag("body-stdin")),
+        )
+        .subcommand(
+            Command::new("wait")
+                .about("Block until mail arrives in an inbox")
+                .arg(option("timeout", "MS"))
+                .arg(option("from", "FROM")),
+        )
+        .subcommand(
+            Command::new("read")
+                .about("Read a mail message by id")
+                .arg(required("id", "ID"))
+                .arg(option("from", "FROM")),
+        )
+        .subcommand(
+            Command::new("list")
+                .about("List mail envelopes in an inbox")
+                .arg(flag("unread-only"))
+                .arg(option("from", "FROM")),
+        )
+}
+
+fn mail_kind_option(name: &'static str, required: bool) -> Arg {
+    option(name, "KIND")
+        .required(required)
+        .value_parser(["done", "blocked", "question", "info"])
 }
 
 fn pane_command() -> Command {

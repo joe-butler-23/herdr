@@ -269,12 +269,12 @@ fn matched_rule_region_preview<'a>(
 
 fn agent_start(args: &[String]) -> std::io::Result<i32> {
     let Some(name) = args.first() else {
-        eprintln!("usage: herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--focus|--no-focus] -- <argv...>");
+        eprintln!("usage: herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--parent-pane ID] [--focus|--no-focus] -- <argv...>");
         return Ok(2);
     };
 
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
-        eprintln!("usage: herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--focus|--no-focus] -- <argv...>");
+        eprintln!("usage: herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--parent-pane ID] [--focus|--no-focus] -- <argv...>");
         return Ok(2);
     };
     if separator == args.len() - 1 {
@@ -288,6 +288,13 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
     let mut split = None;
     let mut focus = false;
     let mut env = HashMap::new();
+    // Defaults to this pane's own id: a worker spawned via `agent start`
+    // stamps its own HERDR_PANE_ID as the child's HERDR_PARENT_TERMINAL_ID/
+    // HERDR_PARENT_PANE_ID (server resolves the durable terminal id), so mail
+    // routing works even without an explicit --parent-pane override.
+    let mut parent_pane_id = std::env::var("HERDR_PANE_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
 
     let mut index = 1;
     while index < separator {
@@ -347,6 +354,14 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
                 env.insert(key, value);
                 index += 2;
             }
+            "--parent-pane" => {
+                let Some(value) = args.get(index + 1).filter(|_| index + 1 < separator) else {
+                    eprintln!("missing value for --parent-pane");
+                    return Ok(2);
+                };
+                parent_pane_id = Some(value.clone());
+                index += 2;
+            }
             other => {
                 eprintln!("unknown option: {other}");
                 return Ok(2);
@@ -365,6 +380,7 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
             focus,
             argv: args[separator + 1..].to_vec(),
             env,
+            parent_pane_id,
         }),
     })?)
 }
@@ -675,7 +691,7 @@ fn print_agent_help() {
     eprintln!("  herdr agent focus <target>");
     eprintln!("  herdr agent wait <target> --status <idle|working|blocked|unknown> [--timeout MS]");
     eprintln!("  herdr agent attach <target> [--takeover]");
-    eprintln!("  herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--focus|--no-focus] -- <argv...>");
+    eprintln!("  herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--parent-pane ID] [--focus|--no-focus] -- <argv...>");
     eprintln!("  herdr agent explain <target> [--json]");
     eprintln!("  herdr agent explain --file PATH --agent LABEL [--json]");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");

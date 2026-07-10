@@ -532,7 +532,14 @@ fn pane_split(args: &[String]) -> std::io::Result<i32> {
     let env_pane_id = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.trim().is_empty());
-    let params = match parse_pane_split_args(args, env_pane_id.as_deref()) {
+    // Independent read of the same env var, for a different purpose:
+    // env_pane_id is the split anchor ("where to split"); parent_pane_id is
+    // "who spawned this pane" for mail routing (HERDR_PARENT_TERMINAL_ID/
+    // HERDR_PARENT_PANE_ID, stamped on the child by the server).
+    let parent_pane_id = std::env::var("HERDR_PANE_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let params = match parse_pane_split_args(args, env_pane_id.as_deref(), parent_pane_id) {
         Ok(params) => params,
         Err(message) => {
             eprintln!("{message}");
@@ -549,6 +556,7 @@ fn pane_split(args: &[String]) -> std::io::Result<i32> {
 fn parse_pane_split_args(
     args: &[String],
     env_pane_id: Option<&str>,
+    parent_pane_id: Option<String>,
 ) -> Result<PaneSplitParams, String> {
     let mut env = std::collections::HashMap::new();
     let mut pane_id = None;
@@ -641,6 +649,7 @@ fn parse_pane_split_args(
         cwd,
         focus,
         env,
+        parent_pane_id,
     })
 }
 
@@ -1479,6 +1488,7 @@ mod tests {
         let params = parse_pane_split_args(
             &args(&["issue-1", "--direction", "right", "--ratio", "0.333"]),
             None,
+            None,
         )
         .unwrap();
 
@@ -1492,6 +1502,7 @@ mod tests {
         let params = parse_pane_split_args(
             &args(&["--direction", "down", "--current"]),
             Some("issue-1"),
+            None,
         )
         .unwrap();
 
@@ -1502,7 +1513,8 @@ mod tests {
     #[test]
     fn parse_pane_split_args_current_without_env_keeps_focused_fallback() {
         let params =
-            parse_pane_split_args(&args(&["--direction", "down", "--current"]), None).unwrap();
+            parse_pane_split_args(&args(&["--direction", "down", "--current"]), None, None)
+                .unwrap();
 
         assert_eq!(params.target_pane_id, None);
         assert_eq!(params.direction, crate::api::schema::SplitDirection::Down);
@@ -1511,7 +1523,7 @@ mod tests {
     #[test]
     fn parse_pane_split_args_omitted_target_keeps_focused_fallback() {
         let params =
-            parse_pane_split_args(&args(&["--direction", "down"]), Some("issue-1")).unwrap();
+            parse_pane_split_args(&args(&["--direction", "down"]), Some("issue-1"), None).unwrap();
 
         assert_eq!(params.target_pane_id, None);
         assert_eq!(params.direction, crate::api::schema::SplitDirection::Down);
@@ -1519,12 +1531,27 @@ mod tests {
 
     #[test]
     fn parse_pane_split_args_accepts_pane_option() {
-        let params =
-            parse_pane_split_args(&args(&["--pane", "issue-2", "--direction", "right"]), None)
-                .unwrap();
+        let params = parse_pane_split_args(
+            &args(&["--pane", "issue-2", "--direction", "right"]),
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(params.target_pane_id, Some("issue-2".into()));
         assert_eq!(params.direction, crate::api::schema::SplitDirection::Right);
+    }
+
+    #[test]
+    fn parse_pane_split_args_defaults_parent_pane_id_from_env() {
+        let params = parse_pane_split_args(
+            &args(&["--direction", "down"]),
+            Some("issue-1"),
+            Some("issue-1".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(params.parent_pane_id, Some("issue-1".into()));
     }
 
     #[test]
