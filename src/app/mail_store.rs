@@ -115,11 +115,18 @@ impl MailInbox {
         stored
     }
 
-    /// Envelopes in FIFO (send) order, optionally filtered to unread-only.
-    pub(crate) fn list(&self, unread_only: bool) -> Vec<MailEnvelope> {
+    /// Envelopes in FIFO (send) order, optionally filtered to unread-only
+    /// and/or to a single sender's `TerminalId`. A message with no resolved
+    /// `from_terminal_id` (self-report failed) never matches a `sender`
+    /// filter.
+    pub(crate) fn list(&self, unread_only: bool, sender: Option<&TerminalId>) -> Vec<MailEnvelope> {
         self.messages
             .iter()
             .filter(|message| !unread_only || !message.read)
+            .filter(|message| match sender {
+                Some(sender) => message.from_terminal_id.as_ref() == Some(sender),
+                None => true,
+            })
             .map(StoredMailMessage::to_envelope)
             .collect()
     }
@@ -212,7 +219,7 @@ mod tests {
         assert_eq!(first.id, 1);
         assert_eq!(second.id, 2);
 
-        let unread = inbox.list(true);
+        let unread = inbox.list(true, None);
         assert_eq!(unread.len(), 2);
         assert!(unread.iter().all(|envelope| !envelope.read));
 
@@ -221,11 +228,11 @@ mod tests {
         assert_eq!(read_message.id, 1);
 
         // Marking one message read doesn't affect the other's unread status.
-        let unread_after = inbox.list(true);
+        let unread_after = inbox.list(true, None);
         assert_eq!(unread_after.len(), 1);
         assert_eq!(unread_after[0].id, 2);
 
-        let all = inbox.list(false);
+        let all = inbox.list(false, None);
         assert_eq!(all.len(), 2);
         assert!(all[0].read);
         assert!(!all[1].read);
@@ -239,16 +246,24 @@ mod tests {
         inbox.insert(new_message("term_to", "a", "a"), 1);
         inbox.insert(new_message("term_to", "b", "b"), 2);
 
-        let lowest = inbox.list(true).into_iter().next().expect("unread present");
+        let lowest = inbox
+            .list(true, None)
+            .into_iter()
+            .next()
+            .expect("unread present");
         assert_eq!(lowest.id, 1);
         // Scanning repeatedly must not mark anything read.
-        let lowest_again = inbox.list(true).into_iter().next().expect("still unread");
+        let lowest_again = inbox
+            .list(true, None)
+            .into_iter()
+            .next()
+            .expect("still unread");
         assert_eq!(lowest_again.id, 1);
         assert!(!lowest_again.read);
 
         inbox.mark_read(1);
         let next_lowest = inbox
-            .list(true)
+            .list(true, None)
             .into_iter()
             .next()
             .expect("second still unread");
@@ -263,13 +278,35 @@ mod tests {
     }
 
     #[test]
+    fn list_sender_filter_only_returns_that_senders_messages() {
+        let mut inbox = MailInbox::default();
+        let mut from_b = new_message("term_to", "from b", "b body");
+        from_b.from_terminal_id = Some(terminal("term_b"));
+        inbox.insert(new_message("term_to", "from a", "a body"), 1); // from_terminal_id = term_from
+        inbox.insert(from_b, 2);
+
+        let only_a = inbox.list(false, Some(&terminal("term_from")));
+        assert_eq!(only_a.len(), 1);
+        assert_eq!(only_a[0].subject, "from a");
+
+        let only_b = inbox.list(true, Some(&terminal("term_b")));
+        assert_eq!(only_b.len(), 1);
+        assert_eq!(only_b[0].subject, "from b");
+
+        // A sender with no messages in this inbox yields an empty list, not
+        // an error — filtering is purely a view over existing messages.
+        let none_from_unknown = inbox.list(false, Some(&terminal("term_nobody")));
+        assert!(none_from_unknown.is_empty());
+    }
+
+    #[test]
     fn fifo_trim_drops_oldest_past_cap_and_ids_stay_monotonic() {
         let mut inbox = MailInbox::default();
         let total = MAIL_INBOX_MAX_MESSAGES + 1;
         for i in 0..total {
             inbox.insert(new_message("term_to", "s", "b"), i as u64);
         }
-        let all = inbox.list(false);
+        let all = inbox.list(false, None);
         assert_eq!(all.len(), MAIL_INBOX_MAX_MESSAGES);
         // The oldest (id 1) was trimmed; the surviving oldest is id 2, and
         // the newest carries the true total-sent id, not a re-based count.

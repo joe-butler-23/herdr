@@ -1125,7 +1125,8 @@ fn request_round_trips_for_mail_list() {
     let request = Request {
         id: "req_mail_list".into(),
         method: Method::MailList(MailListParams {
-            from: "p_1_5".into(),
+            inbox: "p_1_5".into(),
+            sender: None,
             unread_only: true,
         }),
     };
@@ -1137,11 +1138,29 @@ fn request_round_trips_for_mail_list() {
 }
 
 #[test]
+fn request_round_trips_for_mail_list_with_sender_filter() {
+    let request = Request {
+        id: "req_mail_list_sender".into(),
+        method: Method::MailList(MailListParams {
+            inbox: "p_1_5".into(),
+            sender: Some("p_1_3".into()),
+            unread_only: false,
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "mail.list");
+    assert_eq!(json["params"]["sender"], "p_1_3");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
 fn request_round_trips_for_mail_read() {
     let request = Request {
         id: "req_mail_read".into(),
         method: Method::MailRead(MailReadParams {
-            from: "p_1_5".into(),
+            inbox: "p_1_5".into(),
             id: 7,
         }),
     };
@@ -1157,13 +1176,32 @@ fn request_round_trips_for_mail_wait() {
     let request = Request {
         id: "req_mail_wait".into(),
         method: Method::MailWait(MailWaitParams {
-            from: "p_1_5".into(),
+            inbox: "p_1_5".into(),
+            sender: None,
             timeout_ms: Some(900_000),
         }),
     };
 
     let json = serde_json::to_value(&request).unwrap();
     assert_eq!(json["method"], "mail.wait");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn request_round_trips_for_mail_wait_with_sender_filter() {
+    let request = Request {
+        id: "req_mail_wait_sender".into(),
+        method: Method::MailWait(MailWaitParams {
+            inbox: "p_1_5".into(),
+            sender: Some("p_1_3".into()),
+            timeout_ms: Some(900_000),
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "mail.wait");
+    assert_eq!(json["params"]["sender"], "p_1_3");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
 }

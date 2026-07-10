@@ -261,8 +261,24 @@ fn mail_send(
 /// Blocking `mail.wait`. The client-side read timeout is padded well past
 /// `timeout_ms` so we always observe the server's own `timeout`/match
 /// response rather than a spurious client-side read timeout.
-fn mail_wait(socket_path: &Path, id: &str, from: &str, timeout_ms: Option<u64>) -> Value {
-    let mut params = json!({"from": from});
+fn mail_wait(socket_path: &Path, id: &str, inbox: &str, timeout_ms: Option<u64>) -> Value {
+    mail_wait_from(socket_path, id, inbox, None, timeout_ms)
+}
+
+/// `mail.wait` with an explicit sender filter (`--from` on the CLI). Other
+/// senders' unread mail in `inbox` must not satisfy this wait and must be
+/// left untouched.
+fn mail_wait_from(
+    socket_path: &Path,
+    id: &str,
+    inbox: &str,
+    sender: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Value {
+    let mut params = json!({"inbox": inbox});
+    if let Some(sender) = sender {
+        params["sender"] = json!(sender);
+    }
     if let Some(timeout_ms) = timeout_ms {
         params["timeout_ms"] = json!(timeout_ms);
     }
@@ -275,24 +291,35 @@ fn mail_wait(socket_path: &Path, id: &str, from: &str, timeout_ms: Option<u64>) 
     )
 }
 
-fn mail_list(socket_path: &Path, id: &str, from: &str, unread_only: bool) -> Value {
+fn mail_list(socket_path: &Path, id: &str, inbox: &str, unread_only: bool) -> Value {
+    mail_list_from(socket_path, id, inbox, None, unread_only)
+}
+
+/// `mail.list` with an explicit sender filter (`--from` on the CLI).
+fn mail_list_from(
+    socket_path: &Path,
+    id: &str,
+    inbox: &str,
+    sender: Option<&str>,
+    unread_only: bool,
+) -> Value {
+    let mut params = json!({"inbox": inbox, "unread_only": unread_only});
+    if let Some(sender) = sender {
+        params["sender"] = json!(sender);
+    }
     send_request(
         socket_path,
-        &json!({
-            "id": id,
-            "method": "mail.list",
-            "params": {"from": from, "unread_only": unread_only},
-        }),
+        &json!({"id": id, "method": "mail.list", "params": params}),
     )
 }
 
-fn mail_read(socket_path: &Path, id: &str, from: &str, mail_id: u64) -> Value {
+fn mail_read(socket_path: &Path, id: &str, inbox: &str, mail_id: u64) -> Value {
     send_request(
         socket_path,
         &json!({
             "id": id,
             "method": "mail.read",
-            "params": {"from": from, "id": mail_id},
+            "params": {"inbox": inbox, "id": mail_id},
         }),
     )
 }
@@ -600,6 +627,168 @@ fn one_waiter_multiplexes_many_senders() {
         Some(2_000),
     );
     assert_eq!(second["result"]["envelope"]["id"].as_u64().unwrap(), ids[1]);
+
+    cleanup_spawned_herdr(child, base);
+}
+
+// ================= sender filter (mail.wait/mail.list `--from`) =================
+
+/// Live-validation finding: with several workers in flight, an orchestrator
+/// waiting on one specific worker must not be satisfied by a DIFFERENT
+/// worker's unrelated mail. Sender A's mail is queued unread first; a
+/// sender-B-filtered wait must NOT match it and must genuinely time out,
+/// leaving A's message untouched. Once B sends, the same filtered wait
+/// matches B's envelope — and neither the failed nor the successful wait
+/// marks anything read (only `mail.read` does), nor do they ever return the
+/// other sender's message via `mail.list --from`.
+#[test]
+fn wait_filters_by_sender_while_other_mail_queued() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "sf:ws");
+    let recipient = root_pane_of(&created);
+    let sender_a = split_pane(&socket_path, "sf:splitA", &recipient.pane_id, false);
+    let sender_b = split_pane(&socket_path, "sf:splitB", &recipient.pane_id, false);
+
+    // A's mail is queued (unread) before B ever sends anything.
+    let sent_a = mail_send(
+        &socket_path,
+        "sf:sendA",
+        &recipient.pane_id,
+        "info",
+        "A queued first",
+        "from A",
+        Some(&sender_a.pane_id),
+    );
+    assert_eq!(sent_a["result"]["type"], "mail_sent", "{sent_a}");
+    let a_id = sent_a["result"]["envelope"]["id"].as_u64().unwrap();
+
+    // A waiter filtered to sender B must NOT match A's already-queued mail —
+    // it must genuinely block until the deadline, not spuriously match.
+    let start = Instant::now();
+    let timed_out = mail_wait_from(
+        &socket_path,
+        "sf:wait_b_times_out",
+        &recipient.pane_id,
+        Some(&sender_b.pane_id),
+        Some(300),
+    );
+    let elapsed = start.elapsed();
+    assert_eq!(
+        timed_out["error"]["code"], "timeout",
+        "a sender-B-filtered wait must not be satisfied by sender A's mail: {timed_out}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(300),
+        "timeout fired too early ({elapsed:?}); the wait must actually block on the sender filter"
+    );
+
+    // A's message must still be unread and untouched by the failed wait.
+    let a_still_unread = mail_list_from(
+        &socket_path,
+        "sf:list_a_unread",
+        &recipient.pane_id,
+        Some(&sender_a.pane_id),
+        true,
+    );
+    let a_messages = a_still_unread["result"]["messages"].as_array().unwrap();
+    assert_eq!(
+        a_messages.len(),
+        1,
+        "sender A's mail must remain unread and visible to a sender-A list filter: {a_still_unread}"
+    );
+    assert_eq!(a_messages[0]["id"], a_id);
+    assert_eq!(a_messages[0]["read"], false);
+
+    // Now B sends; a sender-B-filtered wait must match B's mail specifically
+    // (never re-surfacing A's), while A's mail is still untouched.
+    let sent_b = mail_send(
+        &socket_path,
+        "sf:sendB",
+        &recipient.pane_id,
+        "done",
+        "B finished",
+        "from B",
+        Some(&sender_b.pane_id),
+    );
+    assert_eq!(sent_b["result"]["type"], "mail_sent", "{sent_b}");
+    let b_id = sent_b["result"]["envelope"]["id"].as_u64().unwrap();
+
+    let waited_b = mail_wait_from(
+        &socket_path,
+        "sf:wait_b_matches",
+        &recipient.pane_id,
+        Some(&sender_b.pane_id),
+        Some(2_000),
+    );
+    assert_eq!(
+        waited_b["result"]["type"], "mail_wait_matched",
+        "{waited_b}"
+    );
+    assert_eq!(waited_b["result"]["envelope"]["id"], b_id);
+    assert_eq!(
+        waited_b["result"]["envelope"]["from_pane_id"], sender_b.pane_id,
+        "a sender-filtered wait must return that sender's envelope"
+    );
+
+    // Neither wait attempt marked anything read: both A's and B's messages
+    // are still unread, each visible only to its own sender filter.
+    let a_unread_after = mail_list_from(
+        &socket_path,
+        "sf:list_a_after",
+        &recipient.pane_id,
+        Some(&sender_a.pane_id),
+        true,
+    );
+    let a_msgs_after = a_unread_after["result"]["messages"].as_array().unwrap();
+    assert_eq!(a_msgs_after.len(), 1, "{a_unread_after}");
+    assert_eq!(a_msgs_after[0]["id"], a_id);
+    assert_eq!(
+        a_msgs_after[0]["read"], false,
+        "mail.wait must never mark a message read"
+    );
+
+    let b_unread_after = mail_list_from(
+        &socket_path,
+        "sf:list_b_after",
+        &recipient.pane_id,
+        Some(&sender_b.pane_id),
+        true,
+    );
+    let b_msgs_after = b_unread_after["result"]["messages"].as_array().unwrap();
+    assert_eq!(b_msgs_after.len(), 1, "{b_unread_after}");
+    assert_eq!(b_msgs_after[0]["id"], b_id);
+
+    // Unfiltered list still sees both — the sender filter is a view, not a
+    // partition that hides messages from the base inbox.
+    let all_unread = mail_list(&socket_path, "sf:list_all", &recipient.pane_id, true);
+    let all_messages = all_unread["result"]["messages"].as_array().unwrap();
+    assert_eq!(all_messages.len(), 2, "{all_unread}");
+
+    // Unresolvable sender filters fail cleanly rather than matching anything.
+    let bad_sender = mail_wait_from(
+        &socket_path,
+        "sf:wait_bad_sender",
+        &recipient.pane_id,
+        Some("p_9_999_does_not_exist"),
+        Some(500),
+    );
+    assert_eq!(
+        bad_sender["error"]["code"], "sender_not_found",
+        "an unresolvable sender filter must fail explicitly: {bad_sender}"
+    );
+    let bad_sender_list = mail_list_from(
+        &socket_path,
+        "sf:list_bad_sender",
+        &recipient.pane_id,
+        Some("p_9_999_does_not_exist"),
+        false,
+    );
+    assert_eq!(
+        bad_sender_list["error"]["code"], "sender_not_found",
+        "{bad_sender_list}"
+    );
 
     cleanup_spawned_herdr(child, base);
 }

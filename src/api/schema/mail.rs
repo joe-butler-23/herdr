@@ -98,23 +98,38 @@ pub struct MailSendParams {
 pub struct MailListParams {
     /// Whose inbox to list. Required — there is no calling-pane identity on
     /// this socket API, so the CLI defaults it from `HERDR_PANE_ID`.
-    pub from: String,
+    pub inbox: String,
+    /// Optional sender filter: same target grammar as `mail.send`'s `to`
+    /// (pane id, agent name/label, or raw terminal id), resolved via the
+    /// same `resolve_mail_recipient` helper. When present, only envelopes
+    /// whose `from_terminal_id` equals the resolved sender are returned;
+    /// unresolvable senders fail with `sender_not_found`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
     #[serde(default)]
     pub unread_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MailReadParams {
-    pub from: String,
+    /// Whose inbox to read from. `mail.read` looks up an exact message id,
+    /// so it has no sender filter (unlike `mail.list`/`mail.wait`).
+    pub inbox: String,
     pub id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MailWaitParams {
     /// Whose inbox to wait on. Required on the wire; the CLI defaults it
-    /// from `HERDR_PANE_ID` when `--from` is omitted. Not defaulted
+    /// from `HERDR_PANE_ID` when `--inbox` is omitted. Not defaulted
     /// server-side because the server has no calling-pane identity.
-    pub from: String,
+    pub inbox: String,
+    /// Optional sender filter (same grammar/resolution as
+    /// `MailListParams.sender`). When present, the wait blocks until the
+    /// oldest UNREAD message FROM that sender arrives; unread mail from any
+    /// other sender does not satisfy the wait and is left untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }

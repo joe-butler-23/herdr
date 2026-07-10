@@ -455,7 +455,7 @@ fn agent_attach(args: &[String]) -> std::io::Result<i32> {
 
 fn agent_wait(args: &[String]) -> std::io::Result<i32> {
     let Some(target) = args.first() else {
-        eprintln!("usage: herdr agent wait <target> --status <idle|working|blocked|unknown> [--timeout MS]");
+        eprintln!("usage: herdr agent wait <target> --status <idle|working|blocked|done|unknown> [--timeout MS]");
         return Ok(2);
     };
 
@@ -482,7 +482,7 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
                 index += 2;
             }
             "help" | "--help" | "-h" => {
-                eprintln!("usage: herdr agent wait <target> --status <idle|working|blocked|unknown> [--timeout MS]");
+                eprintln!("usage: herdr agent wait <target> --status <idle|working|blocked|done|unknown> [--timeout MS]");
                 return Ok(0);
             }
             other => {
@@ -662,7 +662,7 @@ fn agent_wait_status_satisfied(desired: AgentStatus, current: &str) -> bool {
         AgentStatus::Working => current == "working",
         AgentStatus::Blocked => current == "blocked",
         AgentStatus::Unknown => current == "unknown",
-        AgentStatus::Done => false,
+        AgentStatus::Done => current == "done",
     }
 }
 
@@ -672,11 +672,15 @@ fn parse_agent_wait_status(value: &str) -> std::io::Result<AgentStatus> {
         "working" => Ok(AgentStatus::Working),
         "blocked" => Ok(AgentStatus::Blocked),
         "unknown" => Ok(AgentStatus::Unknown),
-        "done" => Err(std::io::Error::other(
-            "done is a UI attention state; use idle for CLI agent completion waits",
-        )),
+        // `done` only occurs while the pane is unwatched (no active
+        // viewer) — a delegated worker that finishes while its tab isn't
+        // focused ends in this state rather than `idle`. Waiting on it
+        // directly lets a caller match the state a pane actually ends in
+        // instead of being forced to wait on `idle` (which `done` never
+        // satisfies on its own transition path).
+        "done" => Ok(AgentStatus::Done),
         _ => Err(std::io::Error::other(format!(
-            "invalid agent status: {value} (expected idle, working, blocked, or unknown)"
+            "invalid agent status: {value} (expected idle, working, blocked, done, or unknown)"
         ))),
     }
 }
@@ -689,12 +693,17 @@ fn print_agent_help() {
     eprintln!("  herdr agent send <target> <text>");
     eprintln!("  herdr agent rename <target> <name>|--clear");
     eprintln!("  herdr agent focus <target>");
-    eprintln!("  herdr agent wait <target> --status <idle|working|blocked|unknown> [--timeout MS]");
+    eprintln!(
+        "  herdr agent wait <target> --status <idle|working|blocked|done|unknown> [--timeout MS]"
+    );
     eprintln!("  herdr agent attach <target> [--takeover]");
     eprintln!("  herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--parent-pane ID] [--focus|--no-focus] -- <argv...>");
     eprintln!("  herdr agent explain <target> [--json]");
     eprintln!("  herdr agent explain --file PATH --agent LABEL [--json]");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");
+    eprintln!(
+        "  --status done only occurs while the pane is unwatched (no active viewer); a watched pane settles to idle instead"
+    );
     eprintln!(
         "  agent send writes literal text; use pane run when you want command text plus Enter"
     );

@@ -341,19 +341,21 @@ fn mail_command() -> Command {
             Command::new("wait")
                 .about("Block until mail arrives in an inbox")
                 .arg(option("timeout", "MS"))
-                .arg(option("from", "FROM")),
+                .arg(option("inbox", "INBOX"))
+                .arg(option("from", "SENDER")),
         )
         .subcommand(
             Command::new("read")
                 .about("Read a mail message by id")
                 .arg(required("id", "ID"))
-                .arg(option("from", "FROM")),
+                .arg(option("inbox", "INBOX")),
         )
         .subcommand(
             Command::new("list")
                 .about("List mail envelopes in an inbox")
                 .arg(flag("unread-only"))
-                .arg(option("from", "FROM")),
+                .arg(option("inbox", "INBOX"))
+                .arg(option("from", "SENDER")),
         )
 }
 
@@ -801,7 +803,7 @@ fn status_option(name: &'static str, required: bool) -> Arg {
 fn agent_wait_status_option() -> Arg {
     option("status", "STATUS")
         .required(true)
-        .value_parser(["idle", "working", "blocked", "unknown"])
+        .value_parser(["idle", "working", "blocked", "done", "unknown"])
 }
 
 fn pane_agent_state_option(name: &'static str) -> Arg {
@@ -960,7 +962,11 @@ mod tests {
         assert!(values.contains(&"idle".to_string()));
         assert!(values.contains(&"working".to_string()));
         assert!(values.contains(&"blocked".to_string()));
-        assert!(!values.contains(&"done".to_string()));
+        // `done` only occurs while the pane is unwatched, but delegated
+        // panes can genuinely end there, so `agent wait --status done`
+        // must be a valid, waitable target — matching `wait agent-status`,
+        // which has always accepted it.
+        assert!(values.contains(&"done".to_string()));
     }
 
     #[test]

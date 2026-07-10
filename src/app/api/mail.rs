@@ -70,7 +70,7 @@ impl App {
     }
 
     pub(super) fn handle_mail_list(&mut self, id: String, params: MailListParams) -> String {
-        let from = match self.resolve_mail_recipient(&params.from) {
+        let inbox_terminal_id = match self.resolve_mail_recipient(&params.inbox) {
             Ok(terminal_id) => terminal_id,
             Err(target) => {
                 return encode_error(
@@ -80,17 +80,30 @@ impl App {
                 )
             }
         };
+        let sender_filter = match params.sender.as_deref() {
+            Some(sender) => match self.resolve_mail_recipient(sender) {
+                Ok(terminal_id) => Some(terminal_id),
+                Err(target) => {
+                    return encode_error(
+                        id,
+                        "sender_not_found",
+                        format!("no pane/agent/terminal matches sender '{target}'"),
+                    )
+                }
+            },
+            None => None,
+        };
         let messages = self
             .state
             .mail_inboxes
-            .get(&from)
-            .map(|inbox| inbox.list(params.unread_only))
+            .get(&inbox_terminal_id)
+            .map(|inbox| inbox.list(params.unread_only, sender_filter.as_ref()))
             .unwrap_or_default();
         encode_success(id, ResponseResult::MailList { messages })
     }
 
     pub(super) fn handle_mail_read(&mut self, id: String, params: MailReadParams) -> String {
-        let from = match self.resolve_mail_recipient(&params.from) {
+        let inbox_terminal_id = match self.resolve_mail_recipient(&params.inbox) {
             Ok(terminal_id) => terminal_id,
             Err(target) => {
                 return encode_error(
@@ -100,7 +113,7 @@ impl App {
                 )
             }
         };
-        let Some(inbox) = self.state.mail_inboxes.get_mut(&from) else {
+        let Some(inbox) = self.state.mail_inboxes.get_mut(&inbox_terminal_id) else {
             return mail_not_found(id, params.id);
         };
         let Some(message) = inbox.mark_read(params.id) else {

@@ -1835,9 +1835,16 @@
         },
         "MailListParams": {
           "properties": {
-            "from": {
+            "inbox": {
               "description": "Whose inbox to list. Required — there is no calling-pane identity on\nthis socket API, so the CLI defaults it from `HERDR_PANE_ID`.",
               "type": "string"
+            },
+            "sender": {
+              "description": "Optional sender filter: same target grammar as `mail.send`'s `to`\n(pane id, agent name/label, or raw terminal id), resolved via the\nsame `resolve_mail_recipient` helper. When present, only envelopes\nwhose `from_terminal_id` equals the resolved sender are returned;\nunresolvable senders fail with `sender_not_found`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "unread_only": {
               "default": false,
@@ -1845,23 +1852,24 @@
             }
           },
           "required": [
-            "from"
+            "inbox"
           ],
           "type": "object"
         },
         "MailReadParams": {
           "properties": {
-            "from": {
-              "type": "string"
-            },
             "id": {
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "inbox": {
+              "description": "Whose inbox to read from. `mail.read` looks up an exact message id,\nso it has no sender filter (unlike `mail.list`/`mail.wait`).",
+              "type": "string"
             }
           },
           "required": [
-            "from",
+            "inbox",
             "id"
           ],
           "type": "object"
@@ -1908,9 +1916,16 @@
         },
         "MailWaitParams": {
           "properties": {
-            "from": {
-              "description": "Whose inbox to wait on. Required on the wire; the CLI defaults it\nfrom `HERDR_PANE_ID` when `--from` is omitted. Not defaulted\nserver-side because the server has no calling-pane identity.",
+            "inbox": {
+              "description": "Whose inbox to wait on. Required on the wire; the CLI defaults it\nfrom `HERDR_PANE_ID` when `--inbox` is omitted. Not defaulted\nserver-side because the server has no calling-pane identity.",
               "type": "string"
+            },
+            "sender": {
+              "description": "Optional sender filter (same grammar/resolution as\n`MailListParams.sender`). When present, the wait blocks until the\noldest UNREAD message FROM that sender arrives; unread mail from any\nother sender does not satisfy the wait and is left untouched.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "timeout_ms": {
               "format": "uint64",
@@ -1922,7 +1937,7 @@
             }
           },
           "required": [
-            "from"
+            "inbox"
           ],
           "type": "object"
         },

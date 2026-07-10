@@ -129,7 +129,9 @@ pub(super) fn wait_for_output(
 /// Blocking wait for mail. Reuses `Method::MailList { unread_only: true }`
 /// as the poll primitive (no bespoke peek method — mirrors
 /// `wait_for_output` re-dispatching `Method::PaneRead` each tick) and takes
-/// the lowest-id (oldest) unread envelope, without marking anything read.
+/// the lowest-id (oldest) unread envelope (optionally filtered to a single
+/// sender), without marking anything read. Mail from any other sender never
+/// satisfies a sender-filtered wait and is left untouched in the inbox.
 pub(super) fn wait_for_mail(
     request_id: String,
     params: MailWaitParams,
@@ -141,7 +143,8 @@ pub(super) fn wait_for_mail(
         .timeout_ms
         .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
     let list_params = MailListParams {
-        from: params.from,
+        inbox: params.inbox,
+        sender: params.sender,
         unread_only: true,
     };
 

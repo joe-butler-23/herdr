@@ -165,7 +165,8 @@ fn mail_send(args: &[String]) -> std::io::Result<i32> {
 
 fn mail_wait(args: &[String]) -> std::io::Result<i32> {
     let mut timeout_ms = None;
-    let mut from = None;
+    let mut inbox = None;
+    let mut sender = None;
 
     let mut index = 0;
     while index < args.len() {
@@ -178,16 +179,24 @@ fn mail_wait(args: &[String]) -> std::io::Result<i32> {
                 timeout_ms = Some(super::parse_u64_flag("--timeout", value)?);
                 index += 2;
             }
+            "--inbox" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --inbox");
+                    return Ok(2);
+                };
+                inbox = Some(value.clone());
+                index += 2;
+            }
             "--from" => {
                 let Some(value) = args.get(index + 1) else {
                     eprintln!("missing value for --from");
                     return Ok(2);
                 };
-                from = Some(value.clone());
+                sender = Some(value.clone());
                 index += 2;
             }
             "help" | "--help" | "-h" => {
-                eprintln!("usage: herdr mail wait [--timeout MS] [--from X]");
+                eprintln!("usage: herdr mail wait [--timeout MS] [--inbox X] [--from SENDER]");
                 return Ok(0);
             }
             other => {
@@ -197,20 +206,24 @@ fn mail_wait(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    let Some(from) = from.or_else(default_from_pane_id) else {
-        eprintln!("error: --from is required outside a herdr pane (HERDR_PANE_ID not set)");
+    let Some(inbox) = inbox.or_else(default_inbox_pane_id) else {
+        eprintln!("error: --inbox is required outside a herdr pane (HERDR_PANE_ID not set)");
         return Ok(2);
     };
 
     super::print_response(&super::send_request(&Request {
         id: "cli:mail:wait".into(),
-        method: Method::MailWait(MailWaitParams { from, timeout_ms }),
+        method: Method::MailWait(MailWaitParams {
+            inbox,
+            sender,
+            timeout_ms,
+        }),
     })?)
 }
 
 fn mail_read(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_id) = args.first() else {
-        eprintln!("usage: herdr mail read <id> [--from X]");
+        eprintln!("usage: herdr mail read <id> [--inbox X]");
         return Ok(2);
     };
     let id = match raw_id.parse::<u64>() {
@@ -221,20 +234,20 @@ fn mail_read(args: &[String]) -> std::io::Result<i32> {
         }
     };
 
-    let mut from = None;
+    let mut inbox = None;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
-            "--from" => {
+            "--inbox" => {
                 let Some(value) = args.get(index + 1) else {
-                    eprintln!("missing value for --from");
+                    eprintln!("missing value for --inbox");
                     return Ok(2);
                 };
-                from = Some(value.clone());
+                inbox = Some(value.clone());
                 index += 2;
             }
             "help" | "--help" | "-h" => {
-                eprintln!("usage: herdr mail read <id> [--from X]");
+                eprintln!("usage: herdr mail read <id> [--inbox X]");
                 return Ok(0);
             }
             other => {
@@ -244,30 +257,39 @@ fn mail_read(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    let Some(from) = from.or_else(default_from_pane_id) else {
-        eprintln!("error: --from is required outside a herdr pane (HERDR_PANE_ID not set)");
+    let Some(inbox) = inbox.or_else(default_inbox_pane_id) else {
+        eprintln!("error: --inbox is required outside a herdr pane (HERDR_PANE_ID not set)");
         return Ok(2);
     };
 
     super::print_response(&super::send_request(&Request {
         id: "cli:mail:read".into(),
-        method: Method::MailRead(MailReadParams { from, id }),
+        method: Method::MailRead(MailReadParams { inbox, id }),
     })?)
 }
 
 fn mail_list(args: &[String]) -> std::io::Result<i32> {
-    let mut from = None;
+    let mut inbox = None;
+    let mut sender = None;
     let mut unread_only = false;
 
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--inbox" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --inbox");
+                    return Ok(2);
+                };
+                inbox = Some(value.clone());
+                index += 2;
+            }
             "--from" => {
                 let Some(value) = args.get(index + 1) else {
                     eprintln!("missing value for --from");
                     return Ok(2);
                 };
-                from = Some(value.clone());
+                sender = Some(value.clone());
                 index += 2;
             }
             "--unread-only" => {
@@ -275,7 +297,7 @@ fn mail_list(args: &[String]) -> std::io::Result<i32> {
                 index += 1;
             }
             "help" | "--help" | "-h" => {
-                eprintln!("usage: herdr mail list [--unread-only] [--from X]");
+                eprintln!("usage: herdr mail list [--unread-only] [--inbox X] [--from SENDER]");
                 return Ok(0);
             }
             other => {
@@ -285,18 +307,22 @@ fn mail_list(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    let Some(from) = from.or_else(default_from_pane_id) else {
-        eprintln!("error: --from is required outside a herdr pane (HERDR_PANE_ID not set)");
+    let Some(inbox) = inbox.or_else(default_inbox_pane_id) else {
+        eprintln!("error: --inbox is required outside a herdr pane (HERDR_PANE_ID not set)");
         return Ok(2);
     };
 
     super::print_response(&super::send_request(&Request {
         id: "cli:mail:list".into(),
-        method: Method::MailList(MailListParams { from, unread_only }),
+        method: Method::MailList(MailListParams {
+            inbox,
+            sender,
+            unread_only,
+        }),
     })?)
 }
 
-fn default_from_pane_id() -> Option<String> {
+fn default_inbox_pane_id() -> Option<String> {
     std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -317,11 +343,12 @@ fn parse_mail_kind(value: &str) -> Result<MailKind, String> {
 fn print_mail_help() {
     eprintln!("herdr mail commands:");
     eprintln!("  herdr mail send <to> --kind done|blocked|question|info --subject S [--body TEXT | --body-file PATH | --body-stdin]");
-    eprintln!("  herdr mail wait [--timeout MS] [--from X]");
-    eprintln!("  herdr mail read <id> [--from X]");
-    eprintln!("  herdr mail list [--unread-only] [--from X]");
+    eprintln!("  herdr mail wait [--timeout MS] [--inbox X] [--from SENDER]");
+    eprintln!("  herdr mail read <id> [--inbox X]");
+    eprintln!("  herdr mail list [--unread-only] [--inbox X] [--from SENDER]");
     eprintln!("  <to> accepts pane ids, agent names, terminal ids, or the literal 'parent' (resolved from HERDR_PARENT_TERMINAL_ID, falling back to HERDR_PARENT_PANE_ID)");
-    eprintln!("  --from defaults from HERDR_PANE_ID when omitted");
+    eprintln!("  --inbox selects whose inbox to read/list/wait on; defaults from HERDR_PANE_ID when omitted");
+    eprintln!("  --from filters wait/list to mail sent by that sender (pane id, agent name, or terminal id); omit to match any sender");
 }
 
 #[cfg(test)]
