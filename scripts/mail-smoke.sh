@@ -155,7 +155,7 @@ mail_id="$(echo "$wait_response" | json_field result.envelope.id)"
 [[ "$mail_kind" == "done" ]] || { echo "[FAIL] expected kind=done, got $mail_kind"; exit 1; }
 echo "[PASS] mail.wait matched id=$mail_id kind=$mail_kind"
 
-read_response="$(herdr mail read "$mail_id" --from "$orch_pane")"
+read_response="$(herdr mail read "$mail_id" --inbox "$orch_pane")"
 echo "[PASS] mail.read body:"
 echo "$read_response" | json_field result.message.body | sed 's/^/    /'
 
