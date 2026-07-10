@@ -230,6 +230,8 @@ herdr pane close 1-3
 
 spawn a worker pane and coordinate via the inter-agent message bus. mail is the preferred way to orchestrate workers because it avoids token-expensive polling: the orchestrator spawns once, sends the task, then blocks waiting on the worker's final message instead of repeatedly reading pane text.
 
+mail always lands in the **recipient's** inbox — when a worker sends to `parent`, the message is stored in the orchestrator's own inbox, not the worker's. so the orchestrator always waits/reads/lists its **own** inbox (the default, taken from `HERDR_PANE_ID` — no `--inbox` flag needed) and uses `--from <sender>` only to filter which sender's mail it is willing to match. this matters with more than one worker in flight: without `--from`, `mail wait` returns the oldest unread mail from ANY sender, so a wait aimed at one worker can be satisfied by a different worker's unrelated message.
+
 canonical delegation loop:
 
 ```bash
@@ -246,14 +248,17 @@ herdr wait output "$NEW_PANE" --match ">" --timeout 15000
 herdr pane run "$NEW_PANE" "research kubernetes operator patterns"
 
 # background the mail wait (if your harness supports background shell tasks)
-# to spend zero tokens while the worker runs
+# to spend zero tokens while the worker runs. --from filters to mail sent by
+# this worker specifically, so a different worker's mail can't satisfy it;
+# no --inbox is given, so this waits on your OWN inbox (from HERDR_PANE_ID).
 herdr mail wait --timeout 120000 --from "$NEW_PANE" &
 
-# when you need the result, read just the envelope first
-ENVELOPE=$(herdr mail read <id> --from "$NEW_PANE")
+# when you need the result, read just the envelope first (mail.read has no
+# sender filter — it looks up an exact id in your own inbox by default)
+ENVELOPE=$(herdr mail read <id>)
 
 # read the full body only if body_bytes is worth the token cost
-herdr mail read <id> --from "$NEW_PANE" | jq .body
+herdr mail read <id> | jq .body
 ```
 
 worker sends a reply by calling `herdr mail send parent --kind done --subject "..." --body-stdin` (resolve `parent` in the CLI from `HERDR_PARENT_TERMINAL_ID` or `HERDR_PARENT_PANE_ID`; the server has no notion of "parent").
@@ -313,7 +318,7 @@ herdr pane run 1-3 "review the test coverage in src/api/"
 herdr mail wait --timeout 120000 --from 1-3
 ```
 
-the final `mail wait` blocks until the agent sends a `done` message (automatic with current integrations when the agent's turn completes). use this to coordinate with the agent without polling its screen.
+the final `mail wait` blocks until 1-3 sends a `done` message (automatic with current integrations when the agent's turn completes); `--from 1-3` filters to that sender so a different in-flight worker's mail can't satisfy this wait, and the wait runs against your own default inbox since no `--inbox` is given. use this to coordinate with the agent without polling its screen.
 
 ### coordinate with another agent
 
@@ -327,6 +332,7 @@ herdr pane read 1-1 --source recent --lines 100
 ## notes
 
 - `workspace list`, `workspace create`, `tab list`, `tab create`, `tab get`, `tab focus`, `tab rename`, `tab close`, `pane list`, `pane get`, `pane split`, `wait output`, `wait agent-status`, `mail send`, `mail wait`, `mail read`, and `mail list` print json on success.
+- for `mail wait`/`mail list`/`mail read`, `--inbox` selects whose inbox to act on (default: your own pane, from `HERDR_PANE_ID`); `mail wait`/`mail list` additionally take `--from <sender>` to filter to one sender's mail (a pane id, agent name, or terminal id) — `--from` never changes whose inbox is read, it only narrows which messages in that inbox count.
 - `pane read` prints text, not json.
 - `pane read --format ansi` or `pane read --ansi` returns a rendered ANSI snapshot for TUI feedback loops.
 - `pane read --source recent-unwrapped` is useful when you want to inspect the same unwrapped transcript that `wait output --source recent` matches against.
