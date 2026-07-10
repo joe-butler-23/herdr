@@ -1020,6 +1020,47 @@ fn mail_read_marks_read_and_list_unread_only_filters() {
     cleanup_spawned_herdr(child, base);
 }
 
+/// When a `mail.send` call omits `from_agent` (as the plain CLI does), the
+/// server now enriches it server-side from the resolved `from_pane_id`
+/// sender's detected/reported agent label — the same label `agent.list`
+/// shows — instead of leaving provenance blank.
+#[test]
+fn mail_send_enriches_from_agent_from_reported_sender_pane() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "enrich:ws");
+    let recipient = root_pane_of(&created);
+    let sender = split_pane(&socket_path, "enrich:split", &recipient.pane_id, false);
+
+    let reported = pane_report_agent(
+        &socket_path,
+        "enrich:report",
+        &sender.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "idle",
+    );
+    assert_eq!(reported["result"]["type"], "ok", "{reported}");
+
+    let sent = mail_send(
+        &socket_path,
+        "enrich:send",
+        &recipient.pane_id,
+        "info",
+        "no from_agent supplied",
+        "body",
+        Some(&sender.pane_id),
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+    assert_eq!(
+        sent["result"]["envelope"]["from_agent"], "kimi",
+        "from_agent must be enriched from the sender pane's reported agent label: {sent}"
+    );
+
+    cleanup_spawned_herdr(child, base);
+}
+
 /// Amendment A1: the server must accept a raw `TerminalId` string as a
 /// mail recipient (not only a public pane id, which compacts/renumbers on
 /// pane close) — `resolve_mail_recipient` falls back to a direct
@@ -1263,6 +1304,73 @@ fn nudge_delivers_immediately_to_idle_reported_agent() {
     assert!(
         text.contains(&format!("herdr mail read {mail_id}")),
         "nudge line should point at the exact unread message id, got: {text}"
+    );
+    assert!(
+        !text.contains("reply:"),
+        "a `done` mail expects no reply, so its nudge line must not append a reply hint: {text}"
+    );
+
+    cleanup_spawned_herdr(child, base);
+}
+
+/// A `question` mail's nudge line appends a reply hint pointing at the
+/// sender's pane id from the envelope, so a nudged recipient replies by
+/// mail instead of `pane run`-ing text into the sender's pane (the failure
+/// mode this hint exists to prevent).
+#[test]
+fn nudge_reply_hint_present_for_question_kind() {
+    let _lock = test_lock();
+    let (child, base, socket_path) = new_harness();
+
+    let created = workspace_create(&socket_path, &base, "nudge_f:ws");
+    let recipient = root_pane_of(&created);
+    let sender = split_pane(&socket_path, "nudge_f:split", &recipient.pane_id, false);
+
+    let reported = pane_report_agent(
+        &socket_path,
+        "nudge_f:report",
+        &recipient.pane_id,
+        "herdr:kimi",
+        "kimi",
+        "idle",
+    );
+    assert_eq!(reported["result"]["type"], "ok", "{reported}");
+
+    let sent = mail_send(
+        &socket_path,
+        "nudge_f:send",
+        &recipient.pane_id,
+        "question",
+        "need input",
+        "which way?",
+        Some(&sender.pane_id),
+    );
+    assert_eq!(sent["result"]["type"], "mail_sent", "{sent}");
+    let mail_id = sent["result"]["envelope"]["id"].as_u64().unwrap();
+
+    let text = wait_for_pane_text(
+        &socket_path,
+        &recipient.pane_id,
+        "[herdr mail]",
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|| panic!("nudge line never appeared in the idle recipient's pane"));
+    // The recipient's pane is only 80 columns wide, so the visible-source
+    // render can hard-wrap the (longer, reply-hint-bearing) nudge line
+    // mid-token — join it back so a wrap boundary can't split a substring
+    // match apart, matching how `--source recent-unwrapped` already
+    // handles this for other assertions in this file.
+    let joined: String = text.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+    assert!(
+        joined.contains(&format!("herdr mail read {mail_id}")),
+        "nudge line should point at the exact unread message id, got: {text}"
+    );
+    assert!(
+        joined.contains(&format!(
+            "reply: herdr mail send {} --kind info --subject",
+            sender.pane_id
+        )),
+        "a question mail's nudge line should hint replying to the sender's pane id, got: {text}"
     );
 
     cleanup_spawned_herdr(child, base);

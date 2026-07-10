@@ -51,10 +51,23 @@ impl App {
             .as_deref()
             .and_then(|hint| self.resolve_mail_recipient(hint).ok());
 
+        // The CLI's plain `mail send` never passes from_agent (only hook
+        // callers do); fall back to the resolved sender terminal's
+        // detected/reported agent label — the same label `agent.list`
+        // shows — so provenance still shows up when the sending pane has a
+        // live agent. Caller-supplied from_agent always wins over this.
+        let from_agent = params.from_agent.or_else(|| {
+            from_terminal_id
+                .as_ref()
+                .and_then(|terminal_id| self.state.terminals.get(terminal_id))
+                .and_then(|terminal| terminal.effective_agent_label())
+                .map(str::to_string)
+        });
+
         let stored = self.state.store_mail(NewMailMessage {
             from_terminal_id: from_terminal_id.clone(),
             from_pane_id: params.from_pane_id,
-            from_agent: params.from_agent,
+            from_agent,
             to_terminal_id: to.clone(),
             kind: params.kind,
             subject: params.subject,
@@ -246,6 +259,13 @@ impl App {
     /// at enqueue time, so a burst of mail while pending collapses into one
     /// line). `None` when nothing is unread (nudge was made moot by a
     /// `mail.read` in the meantime).
+    ///
+    /// For a single unread `question`/`info`/`blocked` message, the line
+    /// also appends a reply hint pointing at the sender's pane id from the
+    /// envelope — without it, a nudged worker has been observed replying by
+    /// `pane run`-ing the orchestrator's pane instead, which injects a fake
+    /// user message rather than actually replying. `done` mail expects no
+    /// reply, so it keeps the plain form.
     fn mail_nudge_line(&self, recipient: &TerminalId) -> Option<String> {
         let unread = self
             .state
@@ -262,13 +282,28 @@ impl App {
                     .clone()
                     .or_else(|| envelope.from_pane_id.clone())
                     .unwrap_or_else(|| "unknown".to_string());
-                Some(format!(
+                let mut line = format!(
                     "[herdr mail] {} from {} \"{}\" — check: herdr mail read {}",
                     mail_kind_label(envelope.kind),
                     from,
                     envelope.subject,
                     envelope.id,
-                ))
+                );
+                if matches!(
+                    envelope.kind,
+                    MailKind::Question | MailKind::Info | MailKind::Blocked
+                ) {
+                    let reply_target = envelope
+                        .from_pane_id
+                        .clone()
+                        .or_else(|| envelope.from_terminal_id.clone());
+                    if let Some(reply_target) = reply_target {
+                        line.push_str(&format!(
+                            "; reply: herdr mail send {reply_target} --kind info --subject \"...\""
+                        ));
+                    }
+                }
+                Some(line)
             }
             n => Some(format!(
                 "[herdr mail] {n} unread — check: herdr mail list --unread-only"
