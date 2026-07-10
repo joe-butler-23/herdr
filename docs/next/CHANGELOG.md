@@ -27,6 +27,7 @@
 - `herdr wait agent-status` and subscription pane probes now surface the server's real error (e.g. `pane_not_found`) instead of masking every failure as an `internal_error` reading "failed to decode pane get error" / "failed to decode pane read error".
 - `prefix+e` scrollback editor panes now open on Windows without trying to run `/bin/sh`; Windows uses `VISUAL`, then `EDITOR`, then `notepad.exe` as the fallback editor. (#914)
 - `herdr pane split --current` now resolves to the calling Herdr pane instead of the UI-focused pane when run inside a pane. (#902)
+- `herdr agent start` run from inside a herdr pane now defaults an omitted `--workspace`/`--tab` to the calling pane's own workspace/tab instead of following UI focus, so a worker spawned by an orchestrator lands with its caller instead of wherever a human happens to be looking at the time; explicit `--workspace`/`--tab` still win, and behavior outside a pane is unchanged.
 - Native Windows clients running inside Alacritty now preserve mouse reports and `ctrl+j` input instead of leaking mouse escape sequences into panes. `shift+enter` remains dependent on whether the outer terminal reports it as a distinct modified Enter key. (#792)
 - OMP integration state now recovers after resumed sessions such as `omp -c` and reports Ask/tool approval waits as blocked instead of leaving the pane working or stuck on the previous OMP session. (#879)
 - Remote attach now discovers compatible Homebrew, mise, and Nix profile installs before offering to install a sidecar binary to `~/.local/bin/herdr`. (#840)

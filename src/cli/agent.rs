@@ -369,6 +369,17 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
+    let env_workspace_id = std::env::var("HERDR_WORKSPACE_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| super::normalize_workspace_id(&value));
+    let env_tab_id = std::env::var("HERDR_TAB_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| super::normalize_tab_id(&value));
+    let (workspace_id, tab_id) =
+        apply_placement_env_defaults(workspace_id, tab_id, env_workspace_id, env_tab_id);
+
     super::print_response(&super::send_request(&Request {
         id: "cli:agent:start".into(),
         method: Method::AgentStart(AgentStartParams {
@@ -383,6 +394,43 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
             parent_pane_id,
         }),
     })?)
+}
+
+/// Fills omitted `--workspace`/`--tab` placement targets from the calling
+/// pane's own `HERDR_WORKSPACE_ID`/`HERDR_TAB_ID` env vars, so `agent start`
+/// run from inside a herdr pane places a worker with the caller instead of
+/// wherever the UI happens to be focused (mirrors #902's `pane split
+/// --current` env-default precedent). Explicit `--workspace`/`--tab` flags
+/// always win — env values only fill slots the caller left entirely
+/// unconstrained:
+///
+/// - neither given: fill both from env.
+/// - only `--workspace` given: leave `--tab` unset, UNLESS the env
+///   workspace matches the given workspace, in which case the env tab is
+///   safe to apply too (same pane => a consistent workspace/tab pair, so
+///   the server's `PlacementConflict` check can't be tripped). If the env
+///   workspace differs, the caller asked for a specific workspace and that
+///   workspace's own active tab is the established meaning — do not mix in
+///   an unrelated env tab.
+/// - `--tab` given (with or without `--workspace`): fully explicit, no
+///   defaulting; an explicit `--tab` is already deterministic server-side.
+fn apply_placement_env_defaults(
+    workspace_id: Option<String>,
+    tab_id: Option<String>,
+    env_workspace_id: Option<String>,
+    env_tab_id: Option<String>,
+) -> (Option<String>, Option<String>) {
+    match (&workspace_id, &tab_id) {
+        (None, None) => (env_workspace_id, env_tab_id),
+        (Some(requested_workspace_id), None) => {
+            if env_workspace_id.as_deref() == Some(requested_workspace_id.as_str()) {
+                (workspace_id, env_tab_id)
+            } else {
+                (workspace_id, None)
+            }
+        }
+        _ => (workspace_id, tab_id),
+    }
 }
 
 fn agent_list(args: &[String]) -> std::io::Result<i32> {
@@ -707,4 +755,97 @@ fn print_agent_help() {
     eprintln!(
         "  agent send writes literal text; use pane run when you want command text plus Enter"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_placement_env_defaults_fills_both_when_neither_given() {
+        let (workspace_id, tab_id) = apply_placement_env_defaults(
+            None,
+            None,
+            Some("1".to_string()),
+            Some("1:t2".to_string()),
+        );
+
+        assert_eq!(workspace_id, Some("1".to_string()));
+        assert_eq!(tab_id, Some("1:t2".to_string()));
+    }
+
+    #[test]
+    fn apply_placement_env_defaults_leaves_both_unset_when_env_absent() {
+        let (workspace_id, tab_id) = apply_placement_env_defaults(None, None, None, None);
+
+        assert_eq!(workspace_id, None);
+        assert_eq!(tab_id, None);
+    }
+
+    #[test]
+    fn apply_placement_env_defaults_explicit_tab_always_wins() {
+        // Explicit --tab given (with no --workspace): env must not touch
+        // either slot, even though only one of the two is "given".
+        let (workspace_id, tab_id) = apply_placement_env_defaults(
+            None,
+            Some("2:t1".to_string()),
+            Some("1".to_string()),
+            Some("1:t2".to_string()),
+        );
+
+        assert_eq!(workspace_id, None);
+        assert_eq!(tab_id, Some("2:t1".to_string()));
+
+        // Explicit --tab AND --workspace given: still fully unchanged,
+        // regardless of what the env vars say.
+        let (workspace_id, tab_id) = apply_placement_env_defaults(
+            Some("2".to_string()),
+            Some("2:t1".to_string()),
+            Some("1".to_string()),
+            Some("1:t2".to_string()),
+        );
+
+        assert_eq!(workspace_id, Some("2".to_string()));
+        assert_eq!(tab_id, Some("2:t1".to_string()));
+    }
+
+    #[test]
+    fn apply_placement_env_defaults_only_workspace_given_matching_env_fills_tab() {
+        let (workspace_id, tab_id) = apply_placement_env_defaults(
+            Some("1".to_string()),
+            None,
+            Some("1".to_string()),
+            Some("1:t2".to_string()),
+        );
+
+        assert_eq!(workspace_id, Some("1".to_string()));
+        assert_eq!(tab_id, Some("1:t2".to_string()));
+    }
+
+    #[test]
+    fn apply_placement_env_defaults_only_workspace_given_differing_env_leaves_tab_unset() {
+        // Caller explicitly asked for workspace "2" while the env pane
+        // lives in workspace "1" — that workspace's own active tab is the
+        // established meaning; the unrelated env tab must not be mixed in
+        // (it could belong to a different workspace and trip the server's
+        // PlacementConflict check).
+        let (workspace_id, tab_id) = apply_placement_env_defaults(
+            Some("2".to_string()),
+            None,
+            Some("1".to_string()),
+            Some("1:t2".to_string()),
+        );
+
+        assert_eq!(workspace_id, Some("2".to_string()));
+        assert_eq!(tab_id, None);
+    }
+
+    #[test]
+    fn apply_placement_env_defaults_only_workspace_given_no_env_leaves_tab_unset() {
+        let (workspace_id, tab_id) =
+            apply_placement_env_defaults(Some("2".to_string()), None, None, None);
+
+        assert_eq!(workspace_id, Some("2".to_string()));
+        assert_eq!(tab_id, None);
+    }
 }

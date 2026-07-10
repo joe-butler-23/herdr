@@ -317,6 +317,29 @@ fn run_cli(socket_path: &Path, args: &[&str]) -> std::process::Output {
     command.output().unwrap()
 }
 
+fn run_cli_with_env(
+    socket_path: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_herdr"));
+    command.args(args);
+    command.env("HERDR_SOCKET_PATH", socket_path);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command.output().unwrap()
+}
+
+fn run_cli_with_env_json(
+    socket_path: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> serde_json::Value {
+    let output = run_cli_with_env(socket_path, args, envs);
+    parse_cli_json_output(args, output)
+}
+
 fn run_cli_in_dir(socket_path: &Path, args: &[&str], current_dir: &Path) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_herdr"));
     command.args(args);
@@ -2492,6 +2515,97 @@ fn agent_start_command_works() {
     assert!(!duplicate.status.success());
     let duplicate_json: serde_json::Value = serde_json::from_slice(&duplicate.stderr).unwrap();
     assert_eq!(duplicate_json["error"]["code"], "agent_name_taken");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+/// `agent start` server-side placement falls back to whatever tab the UI
+/// currently has focused when neither `--workspace` nor `--tab` is given
+/// (see `src/app/agents.rs`). Run from inside a herdr pane (HERDR_WORKSPACE_ID
+/// / HERDR_TAB_ID set in env, as herdr stamps them into every pane it
+/// spawns), `agent start` must default omitted placement from those env vars
+/// instead, so a worker spawned by an orchestrator lands with its caller
+/// rather than wherever a human happens to be looking. Outside a pane (no
+/// env vars) the original UI-focus-following behavior is unchanged.
+#[test]
+fn agent_start_defaults_placement_from_env_tab_id_over_ui_focus() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = run_cli_json(
+        &socket_path,
+        &["workspace", "create", "--cwd", base.to_str().unwrap()],
+    );
+    let workspace_id = created["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let tab1_id = created["result"]["workspace"]["active_tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Create a second tab and focus it, so the UI's focused tab (tab2) now
+    // differs from the caller's own tab (tab1) that env vars will point at.
+    let created_tab = run_cli_json(
+        &socket_path,
+        &["tab", "create", "--workspace", &workspace_id, "--focus"],
+    );
+    let tab2_id = created_tab["result"]["tab"]["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(tab1_id, tab2_id);
+
+    // Control case: no HERDR_WORKSPACE_ID/HERDR_TAB_ID env — placement keeps
+    // following UI focus (tab2), matching pre-fix behavior.
+    let started_no_env = run_cli_json(
+        &socket_path,
+        &[
+            "agent",
+            "start",
+            "control",
+            "--cwd",
+            base.to_str().unwrap(),
+            "--no-focus",
+            "--",
+            "/bin/sh",
+            "-c",
+            "sleep 5",
+        ],
+    );
+    assert_eq!(started_no_env["result"]["type"], "agent_started");
+    assert_eq!(started_no_env["result"]["agent"]["tab_id"], tab2_id);
+
+    // With HERDR_WORKSPACE_ID/HERDR_TAB_ID pointing at tab1 (as if the CLI
+    // were invoked from a pane living in tab1, while the UI still has tab2
+    // focused), the new pane must land in tab1 instead of following focus.
+    let started_with_env = run_cli_with_env_json(
+        &socket_path,
+        &[
+            "agent",
+            "start",
+            "targeted",
+            "--cwd",
+            base.to_str().unwrap(),
+            "--no-focus",
+            "--",
+            "/bin/sh",
+            "-c",
+            "sleep 5",
+        ],
+        &[
+            ("HERDR_WORKSPACE_ID", workspace_id.as_str()),
+            ("HERDR_TAB_ID", tab1_id.as_str()),
+        ],
+    );
+    assert_eq!(started_with_env["result"]["type"], "agent_started");
+    assert_eq!(started_with_env["result"]["agent"]["tab_id"], tab1_id);
 
     cleanup_spawned_herdr(herdr, base);
 }
