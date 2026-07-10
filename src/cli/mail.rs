@@ -169,7 +169,7 @@ fn mail_send(args: &[String]) -> std::io::Result<i32> {
     })?)
 }
 
-const MAIL_WAIT_USAGE: &str = "usage: herdr mail wait [--timeout MS] [--inbox X] [--from SENDER] [--consume]\n  wait does NOT mark the matched message read by default: a re-armed wait\n  re-returns the SAME message until it is marked read (via 'herdr mail read'\n  or this call's --consume flag, which atomically marks it read before\n  returning it)";
+const MAIL_WAIT_USAGE: &str = "usage: herdr mail wait [--timeout MS] [--inbox X] [--from SENDER] [--consume]\n  wait does NOT mark the matched message read by default: a re-armed wait\n  re-returns the SAME message until it is marked read (via 'herdr mail read'\n  or this call's --consume flag, which atomically marks it read before\n  returning it)\n  when integrations are installed, mail arrival nudges the recipient's pane\n  directly, so agents should normally end their turn instead of waiting —\n  a foreground wait blocks the caller's turn for up to --timeout";
 
 fn mail_wait(args: &[String]) -> std::io::Result<i32> {
     let mut timeout_ms = None;

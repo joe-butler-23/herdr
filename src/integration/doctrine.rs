@@ -22,14 +22,24 @@ spawned by one, in a herdr-managed pane.
 - opencode worker: the prompt-as-argv subcommand is `run`, not the bare
   `opencode <project>` form:
   `herdr agent start opencode --cwd <dir> --split right --no-focus -- opencode run "task" -m <provider/model>`
-- wait for the result with `herdr mail wait --from <worker> --timeout <ms>`,
-  then `herdr mail read <id>`. spend zero tokens while waiting, two ways:
-  background the wait if your harness notifies you on background-task
-  completion (claude code does); otherwise just end your turn right after
-  dispatch — herdr wakes you by typing a mail notice into your pane the
-  moment the worker's mail arrives (queued while you are mid-turn, delivered
-  the instant you go idle). never loop a foreground timeout wait, and never
-  poll pane read/status to check on a worker.
+- THE method, correct for every agent on every harness: dispatch your
+  workers, then end your turn. herdr wakes you by typing a `[herdr mail]`
+  notice into your pane the moment a worker's mail arrives (queued while
+  you are mid-turn, delivered the instant you go idle) — there is nothing
+  to wait for and nothing to poll. rationale in one line: a foreground
+  wait blocks your whole turn and burns its duration for nothing the nudge
+  doesn't already give you.
+- the ONLY exception: if your harness can run a shell command in the
+  background and notify you when it exits, you MAY background `herdr mail
+  wait --from <worker> --timeout <ms>` instead, then `herdr mail read
+  <id>` when it fires. claude code can do this; codex and opencode cannot
+  — on those harnesses always end your turn instead.
+- hard prohibitions, no exceptions: never run `mail wait` in the
+  foreground — it blocks your turn for the full timeout. never treat
+  `--timeout` as a polling interval to re-issue waits against. never
+  re-issue waits in a loop, and never poll pane read/status to check on a
+  worker. if you find yourself picking a `--timeout` value for
+  coordination, you are doing it wrong — end your turn instead.
 - a parented worker's hook auto-mails `done` at the end of EVERY turn,
   including a turn where it only asked you a question or reported it is
   blocked — that `done` mail is not the real completion. judge completion
@@ -48,6 +58,11 @@ spawned by one, in a herdr-managed pane.
   whatever arrives.
 - `mail wait` does not mark mail read. always `herdr mail read <id>` for
   whatever woke you, or pass `--consume` on the wait itself.
+- once you have read a worker's final done-mail and integrated/verified its
+  work, close its pane: `herdr pane close <pane_id>`. skip this only if you
+  are about to reuse that same worker for follow-up work. finished panes
+  left open accumulate, confuse later pane targeting, and keep sessions
+  resident.
 
 ### as worker
 

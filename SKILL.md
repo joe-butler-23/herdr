@@ -272,25 +272,33 @@ correctly while that agent label is unambiguous (one live pane wearing
 it), so switch to pane/terminal id once more than one worker shares an
 agent name.
 
-there are two zero-token ways to wait for the result — pick whichever your
-harness supports, do not fall back to polling:
+THE method, correct for every agent on every harness: just end your turn
+right after dispatch. herdr wakes a waiting orchestrator by typing a
+`[herdr mail]` notice into its pane the moment the worker's mail arrives —
+mail sent while you are still mid-turn queues and is delivered the instant
+you go idle. there is nothing to wait for and nothing to poll. rationale in
+one line: a foreground wait blocks your whole turn and burns its duration
+for nothing the nudge doesn't already give you.
+
+the ONLY exception: if your harness can run a shell command in the
+background and notify you when it exits (claude code can; codex and
+opencode cannot), you MAY background the wait instead and keep working
+until it fires:
 
 ```bash
-# 1. background the wait, if your harness notifies you on background-task
-# completion (claude code does), and keep working until it fires
+# claude-code-only: background the wait
 herdr mail wait --timeout 120000 --from "$NEW" &
-
-# 2. otherwise just end your turn right after dispatch. herdr wakes a
-# waiting orchestrator by typing a mail notice into its pane the moment the
-# worker's mail arrives — mail sent while you are still mid-turn queues and
-# is delivered the instant you go idle.
 ```
 
-never loop a foreground `mail wait` with retries, and never poll `pane
-read`/`wait agent-status` to check on a worker instead — both defeat the
-point of mail. when you need the result, read just the envelope first
-(`mail read` has no sender filter — it looks up an exact id in your own
-inbox by default), then the body only if it is worth the token cost:
+hard prohibitions, no exceptions: never run `mail wait` in the foreground —
+it blocks your turn for the full timeout. never treat `--timeout` as a
+polling interval to re-issue waits against. never re-issue waits in a loop,
+and never poll `pane read`/`wait agent-status` to check on a worker instead
+— all of these defeat the point of mail. if you find yourself picking a
+`--timeout` value for coordination, you are doing it wrong — end your turn
+instead. when you need the result, read just the envelope first (`mail
+read` has no sender filter — it looks up an exact id in your own inbox by
+default), then the body only if it is worth the token cost:
 
 ```bash
 ENVELOPE=$(herdr mail read <id>)
@@ -325,6 +333,11 @@ integration install` also installs this delegation doctrine into
 claude/codex/opencode's global instructions, so a worker running any of
 those agents already knows these rules without being told them in its
 task prompt.
+
+once you have read a worker's final done-mail and integrated/verified its
+work, close its pane: `herdr pane close <pane_id>`. skip this only if you
+are about to reuse that same worker for follow-up work. finished panes left
+open accumulate, confuse later pane targeting, and keep sessions resident.
 
 ## recipes
 
@@ -375,19 +388,26 @@ herdr pane read 1-3 --source recent-unwrapped --lines 40
 NEW=$(herdr agent start claude --cwd . --split right --no-focus -- \
   claude "review the test coverage in src/api/ — when done your final message is mailed to me automatically" \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["terminal_id"])')
-herdr mail wait --timeout 120000 --from "$NEW"
+
+# THE method, correct on every harness: just end your turn here. herdr
+# types a [herdr mail] notice into your pane the moment $NEW's mail
+# arrives — nothing to wait for, nothing to poll.
+
+# claude-code-only exception: if your harness notifies you on
+# background-task completion, you may background the wait instead:
+herdr mail wait --timeout 120000 --from "$NEW" &
 ```
 
 the prompt is argv, not typed in after boot — one atomic spawn, no race on
-the Enter key or the agent's boot time. the `mail wait` blocks until the
-worker sends `done` mail (automatic with current integrations when its turn
-completes); `--from "$NEW"` filters to that sender so a different in-flight
-worker's mail can't satisfy this wait, and the wait runs against your own
-default inbox since no `--inbox` is given. background this wait if your
-harness notifies on background-task completion; otherwise end your turn
-right after dispatch and let herdr's mail-arrival nudge wake you instead of
-blocking. use this to coordinate with the agent without ever polling its
-screen.
+the Enter key or the agent's boot time. `--from "$NEW"` filters to that
+sender so a different in-flight worker's mail can't satisfy this wait, and
+the wait runs against your own default inbox since no `--inbox` is given.
+never run `mail wait` in the foreground — it blocks your whole turn for the
+timeout and burns it for nothing the mail-arrival nudge doesn't already
+give you; ending your turn is the correct default for codex, opencode, and
+claude code alike. once you have read the result and integrated it, close
+the worker's pane (`herdr pane close <pane_id>`) unless you are about to
+reuse it for follow-up work.
 
 ### coordinate with another agent
 
