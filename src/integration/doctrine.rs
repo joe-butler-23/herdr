@@ -29,6 +29,9 @@ spawned by one.
   `agent start`: `codex-kanban`, `codex-arh-review`, `claude-docs-sweep`.
   unique per-task names keep `--from <name>` mail filters unambiguous and
   make pane targeting readable.
+- a worker prompt is a self-contained brief: name the exact files or
+  paths, the done criteria, and how the worker should verify its work.
+  never reference your own conversation — the worker cannot see it.
 - codex model routing: `gpt-5.6-terra` is the default — most work goes
   there. `gpt-5.6-luna` is fast and affordable yet intelligent — use it
   for well-defined, high-volume work. `gpt-5.6-sol` is the most
