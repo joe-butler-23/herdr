@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: "Control herdr from inside it. Manage workspaces and tabs, split panes, spawn agents, read output, and wait for state changes — all via CLI commands that talk to the running herdr instance over a local unix socket. Use when running inside herdr (HERDR_ENV=1)."
+description: Manage herdr panes beyond worker delegation — workspaces, tabs, splits, sibling shells, servers, log streams, output reads, and wait conditions through the `herdr` CLI over the local unix socket. Do NOT load this skill for spawning workers, worker mail, or closing worker panes; the herdr delegation doctrine in your global instructions covers those completely. Use only inside herdr (`HERDR_ENV=1`) and only when the task needs pane/workspace control beyond delegation. If `HERDR_ENV` is not `1`, stop instead of inspecting or controlling herdr.
 ---
 
 # herdr — agent skill

@@ -5,23 +5,44 @@
 // instead of each agent improvising its own polling loop.
 pub(crate) const DELEGATION_DOCTRINE: &str = r#"## herdr delegation doctrine
 
+this section applies only inside a herdr-managed pane: `HERDR_ENV=1` or
+`HERDR_PARENT_TERMINAL_ID` set in your environment. outside herdr, ignore
+this entire section.
+
+this doctrine is complete for spawning workers, worker mail, and closing
+worker panes — do not load the herdr skill for those. load the skill only
+for pane work beyond delegation: splits, sibling shells, servers, log
+streams, wait conditions, workspace/tab management.
+
 read this whether you are the orchestrator spawning workers or a worker
-spawned by one, in a herdr-managed pane.
+spawned by one.
 
 ### as orchestrator
 
+- panes are single-use. one task per worker pane: spawn it, integrate its
+  result, close it. a new unrelated task gets a new pane, never a recycled
+  one. follow-ups on the same task may continue in the still-open pane.
+- name every worker pane for its task — the name is the first argument to
+  `agent start`: `codex-kanban`, `codex-arh-review`, `claude-docs-sweep`.
+  unique per-task names keep `--from <name>` mail filters unambiguous and
+  make pane targeting readable.
+- codex model routing: `gpt-5.6-terra` is the default — most work goes
+  there. `gpt-5.6-luna` is fast and affordable yet intelligent — use it
+  for well-defined, high-volume work. `gpt-5.6-sol` is the most
+  intelligent — reserve it for adversarial review, second opinions, and
+  tricky debugging.
 - spawn workers with the prompt as argv — one atomic command, never
   launch-then-type. typing a prompt into a pane after boot is racy: you can
   forget the Enter key, or hit a boot race where the agent is not ready yet.
 - claude worker:
-  `herdr agent start claude --cwd <dir> --split right --no-focus -- claude "task text — when done your final message is mailed to me automatically"`
+  `herdr agent start claude-<task> --cwd <dir> --split right --no-focus -- claude "task text — when done your final message is mailed to me automatically"`
 - codex worker: always launch with `--cwd /home/joebutler/vault` — the
   vault's folder permissions are what make bypassing approvals/sandbox safe.
   pick model/effort with `-m` and `-c model_reasoning_effort=`:
-  `herdr agent start codex --cwd /home/joebutler/vault --split right --no-focus -- codex --dangerously-bypass-approvals-and-sandbox -m <model> -c model_reasoning_effort=<minimal|low|medium|high> "task"`
+  `herdr agent start codex-<task> --cwd /home/joebutler/vault --split right --no-focus -- codex --dangerously-bypass-approvals-and-sandbox -m <model> -c model_reasoning_effort=<minimal|low|medium|high> "task"`
 - opencode worker: the prompt-as-argv subcommand is `run`, not the bare
   `opencode <project>` form:
-  `herdr agent start opencode --cwd <dir> --split right --no-focus -- opencode run "task" -m <provider/model>`
+  `herdr agent start opencode-<task> --cwd <dir> --split right --no-focus -- opencode run "task" -m <provider/model>`
 - THE method, correct for every agent on every harness: dispatch your
   workers, then end your turn. herdr wakes you by typing a `[herdr mail]`
   notice into your pane the moment a worker's mail arrives (queued while
@@ -47,10 +68,9 @@ spawned by one, in a herdr-managed pane.
   like a question/status update, and the real completion mail arrives only
   after you reply and the worker finishes its next turn.
 - `--from <worker>` filters by the sender's terminal identity, not a
-  display string — pass a pane id or terminal id for reliability. an
-  agent-name filter (e.g. `--from codex`) only resolves correctly while
-  that agent label is unambiguous (one live pane wearing it); once more
-  than one worker shares an agent name, filter by pane/terminal id instead.
+  display string. unique per-task pane names keep an agent-name filter
+  (e.g. `--from codex-kanban`) reliable; if a name is ever shared by more
+  than one live pane, filter by pane/terminal id instead.
 - to send a follow-up to a worker that is still RUNNING, use the typed
   channel: `herdr pane run <pane> "message"`. argv only works at launch.
 - more than one worker in flight: either issue one `mail wait --from
