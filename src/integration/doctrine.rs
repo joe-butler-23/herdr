@@ -1,8 +1,11 @@
-// Single source of truth for the herdr delegation doctrine. The same text is
-// installed into every agent's global instructions file (claude, codex,
-// opencode) via a herdr-managed fenced block, and is taught in SKILL.md, so
-// orchestrators and workers on any of those runtimes see identical guidance
-// instead of each agent improvising its own polling loop.
+// Single source of truth for the herdr delegation doctrine.
+//
+// Delivery is progressive-disclosure by session: for claude and codex the
+// doctrine is embedded into the installed session hook script (via
+// `render_hook_asset`), so it only enters context for sessions actually
+// running inside a herdr pane (`HERDR_ENV=1`); sessions outside herdr never
+// carry it. Opencode has no session-context hook lane, so it keeps the
+// legacy herdr-managed fenced block in its global AGENTS.md.
 pub(crate) const DELEGATION_DOCTRINE: &str = r#"## herdr delegation doctrine
 
 this section applies only inside a herdr-managed pane: `HERDR_ENV=1` or
@@ -104,3 +107,12 @@ you are a worker if `HERDR_PARENT_TERMINAL_ID` is set in your environment.
 - never poll your parent's panes, and never read sibling panes to
   coordinate. mail is the only channel.
 "#;
+
+/// Placeholder in hook script assets replaced with the doctrine at install
+/// time, so installed hooks stay in sync with this file without depending on
+/// the CLI version available on PATH when the hook runs.
+const DOCTRINE_PLACEHOLDER: &str = "__HERDR_DELEGATION_DOCTRINE__";
+
+pub(crate) fn render_hook_asset(asset: &str) -> String {
+    asset.replace(DOCTRINE_PLACEHOLDER, DELEGATION_DOCTRINE.trim_end())
+}

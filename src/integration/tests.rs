@@ -784,7 +784,7 @@ fn install_claude_writes_hook_and_updates_settings() {
         installed.hook_path,
         claude_dir.join("hooks").join(CLAUDE_HOOK_INSTALL_NAME)
     );
-    assert_eq!(hook_content, CLAUDE_HOOK_ASSET);
+    assert_eq!(hook_content, render_hook_asset(CLAUDE_HOOK_ASSET));
     assert!(settings["permissions"]["allow"].is_array());
     assert_eq!(settings["hooks"]["SessionStart"][0]["matcher"], "*");
     assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
@@ -975,7 +975,7 @@ fn claude_v1_integration_status_is_outdated() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(1));
-    assert_eq!(claude.expected_version, 11);
+    assert_eq!(claude.expected_version, CLAUDE_INTEGRATION_VERSION);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1005,7 +1005,7 @@ fn claude_v2_integration_status_is_outdated() {
 
     assert_eq!(claude.path, hook_path);
     assert_eq!(claude.installed_version, Some(2));
-    assert_eq!(claude.expected_version, 11);
+    assert_eq!(claude.expected_version, CLAUDE_INTEGRATION_VERSION);
     assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1116,7 +1116,7 @@ fn install_claude_errors_when_claude_dir_missing() {
 }
 
 #[test]
-fn install_claude_writes_doctrine_block_and_creates_file_if_absent() {
+fn install_claude_embeds_doctrine_in_session_hook_and_skips_instructions_file() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
@@ -1125,19 +1125,18 @@ fn install_claude_writes_doctrine_block_and_creates_file_if_absent() {
     std::env::set_var("HOME", &home);
 
     let installed = install_claude().unwrap();
-    let doctrine = fs::read_to_string(&installed.doctrine_path).unwrap();
+    let hook = fs::read_to_string(&installed.hook_path).unwrap();
 
-    assert_eq!(installed.doctrine_path, claude_dir.join("CLAUDE.md"));
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
-    assert!(doctrine.contains(DELEGATION_DOCTRINE.trim_end_matches('\n')));
+    assert!(hook.contains(DELEGATION_DOCTRINE.trim_end()));
+    assert!(!hook.contains("__HERDR_DELEGATION_DOCTRINE__"));
+    assert!(!claude_dir.join("CLAUDE.md").exists());
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_claude_doctrine_block_is_idempotent_and_preserves_user_content() {
+fn install_claude_strips_legacy_doctrine_block_and_preserves_user_content() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
@@ -1145,7 +1144,7 @@ fn install_claude_doctrine_block_is_idempotent_and_preserves_user_content() {
     fs::create_dir_all(&claude_dir).unwrap();
     fs::write(
         claude_dir.join("CLAUDE.md"),
-        "# my project notes\n\nkeep this.\n",
+        build_markdown_doctrine_block("# my project notes\n\nkeep this.\n"),
     )
     .unwrap();
     std::env::set_var("HOME", &home);
@@ -1155,8 +1154,8 @@ fn install_claude_doctrine_block_is_idempotent_and_preserves_user_content() {
 
     let doctrine = fs::read_to_string(claude_dir.join("CLAUDE.md")).unwrap();
 
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_BEGIN));
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_END));
     assert!(doctrine.contains("# my project notes"));
     assert!(doctrine.contains("keep this."));
 
@@ -1173,12 +1172,11 @@ fn uninstall_claude_removes_doctrine_block_preserves_other_content() {
     fs::create_dir_all(&claude_dir).unwrap();
     fs::write(
         claude_dir.join("CLAUDE.md"),
-        "# my project notes\n\nkeep this.\n",
+        build_markdown_doctrine_block("# my project notes\n\nkeep this.\n"),
     )
     .unwrap();
     std::env::set_var("HOME", &home);
 
-    install_claude().unwrap();
     let result = uninstall_claude().unwrap();
     let doctrine = fs::read_to_string(&result.doctrine_path).unwrap();
 
@@ -1215,7 +1213,7 @@ fn codex_v2_integration_status_is_outdated() {
 
     assert_eq!(codex.path, hook_path);
     assert_eq!(codex.installed_version, Some(2));
-    assert_eq!(codex.expected_version, 11);
+    assert_eq!(codex.expected_version, CODEX_INTEGRATION_VERSION);
     assert_eq!(codex.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
@@ -1241,7 +1239,7 @@ fn install_codex_writes_hook_and_updates_hooks_and_config() {
     assert_eq!(installed.hook_path, codex_dir.join(CODEX_HOOK_INSTALL_NAME));
     assert_eq!(installed.hooks_path, codex_dir.join("hooks.json"));
     assert_eq!(installed.config_path, codex_dir.join("config.toml"));
-    assert_eq!(hook_content, CODEX_HOOK_ASSET);
+    assert_eq!(hook_content, render_hook_asset(CODEX_HOOK_ASSET));
     assert!(hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
         .as_str()
         .unwrap()
@@ -1431,7 +1429,7 @@ fn install_codex_errors_when_config_dir_missing() {
 }
 
 #[test]
-fn install_codex_writes_doctrine_block_and_creates_file_if_absent() {
+fn install_codex_embeds_doctrine_in_session_hook_and_skips_instructions_file() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
@@ -1440,19 +1438,18 @@ fn install_codex_writes_doctrine_block_and_creates_file_if_absent() {
     std::env::set_var("HOME", &home);
 
     let installed = install_codex().unwrap();
-    let doctrine = fs::read_to_string(&installed.doctrine_path).unwrap();
+    let hook = fs::read_to_string(&installed.hook_path).unwrap();
 
-    assert_eq!(installed.doctrine_path, codex_dir.join("AGENTS.md"));
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
-    assert!(doctrine.contains(DELEGATION_DOCTRINE.trim_end_matches('\n')));
+    assert!(hook.contains(DELEGATION_DOCTRINE.trim_end()));
+    assert!(!hook.contains("__HERDR_DELEGATION_DOCTRINE__"));
+    assert!(!codex_dir.join("AGENTS.md").exists());
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_codex_doctrine_block_is_idempotent_and_preserves_user_content() {
+fn install_codex_strips_legacy_doctrine_block_and_preserves_user_content() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
@@ -1460,7 +1457,7 @@ fn install_codex_doctrine_block_is_idempotent_and_preserves_user_content() {
     fs::create_dir_all(&codex_dir).unwrap();
     fs::write(
         codex_dir.join("AGENTS.md"),
-        "# my codex notes\n\nkeep this.\n",
+        build_markdown_doctrine_block("# my codex notes\n\nkeep this.\n"),
     )
     .unwrap();
     std::env::set_var("HOME", &home);
@@ -1470,8 +1467,8 @@ fn install_codex_doctrine_block_is_idempotent_and_preserves_user_content() {
 
     let doctrine = fs::read_to_string(codex_dir.join("AGENTS.md")).unwrap();
 
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_BEGIN));
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_END));
     assert!(doctrine.contains("# my codex notes"));
     assert!(doctrine.contains("keep this."));
 
@@ -1488,12 +1485,11 @@ fn uninstall_codex_removes_doctrine_block_preserves_other_content() {
     fs::create_dir_all(&codex_dir).unwrap();
     fs::write(
         codex_dir.join("AGENTS.md"),
-        "# my codex notes\n\nkeep this.\n",
+        build_markdown_doctrine_block("# my codex notes\n\nkeep this.\n"),
     )
     .unwrap();
     std::env::set_var("HOME", &home);
 
-    install_codex().unwrap();
     let result = uninstall_codex().unwrap();
     let doctrine = fs::read_to_string(&result.doctrine_path).unwrap();
 

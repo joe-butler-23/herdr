@@ -30,7 +30,8 @@ use super::types::{
     QodercliUninstallResult,
 };
 use super::{
-    CLAUDE_HOOK_ASSET, CLAUDE_HOOK_INSTALL_NAME, CODEX_HOOK_ASSET, CODEX_HOOK_INSTALL_NAME,
+    render_hook_asset, CLAUDE_HOOK_ASSET, CLAUDE_HOOK_INSTALL_NAME, CODEX_HOOK_ASSET,
+    CODEX_HOOK_INSTALL_NAME,
     COPILOT_HOOK_ASSET, COPILOT_HOOK_EVENTS, COPILOT_HOOK_INSTALL_NAME,
     COPILOT_REMOVED_LIFECYCLE_HOOK_EVENTS, CURSOR_HOOK_ASSET, CURSOR_HOOK_INSTALL_NAME,
     DEVIN_HOOK_ASSET, DEVIN_HOOK_EVENTS, DEVIN_HOOK_INSTALL_NAME,
@@ -115,7 +116,7 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(CLAUDE_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, CLAUDE_HOOK_ASSET)?;
+    fs::write(&hook_path, render_hook_asset(CLAUDE_HOOK_ASSET))?;
     make_executable(&hook_path)?;
 
     let settings_path = dir.join("settings.json");
@@ -173,15 +174,15 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
 
     fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
+    // The doctrine now ships inside the session hook (herdr sessions only);
+    // strip the legacy fenced block from the global instructions file.
     let doctrine_path = dir.join("CLAUDE.md");
-    let existing_doctrine = if doctrine_path.is_file() {
-        fs::read_to_string(&doctrine_path)?
-    } else {
-        String::new()
-    };
-    let new_doctrine = build_markdown_doctrine_block(&existing_doctrine);
-    if new_doctrine != existing_doctrine {
-        fs::write(&doctrine_path, new_doctrine)?;
+    if doctrine_path.is_file() {
+        let existing_doctrine = fs::read_to_string(&doctrine_path)?;
+        let new_doctrine = remove_markdown_doctrine_block(&existing_doctrine);
+        if new_doctrine != existing_doctrine {
+            fs::write(&doctrine_path, new_doctrine)?;
+        }
     }
 
     Ok(ClaudeInstallPaths {
@@ -201,7 +202,7 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
     }
 
     let hook_path = dir.join(CODEX_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, CODEX_HOOK_ASSET)?;
+    fs::write(&hook_path, render_hook_asset(CODEX_HOOK_ASSET))?;
     make_executable(&hook_path)?;
 
     let hooks_path = dir.join("hooks.json");
@@ -263,15 +264,15 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
         fs::write(&config_path, new_config)?;
     }
 
+    // The doctrine now ships inside the session hook (herdr sessions only);
+    // strip the legacy fenced block from the global instructions file.
     let doctrine_path = dir.join("AGENTS.md");
-    let existing_doctrine = if doctrine_path.is_file() {
-        fs::read_to_string(&doctrine_path)?
-    } else {
-        String::new()
-    };
-    let new_doctrine = build_markdown_doctrine_block(&existing_doctrine);
-    if new_doctrine != existing_doctrine {
-        fs::write(&doctrine_path, new_doctrine)?;
+    if doctrine_path.is_file() {
+        let existing_doctrine = fs::read_to_string(&doctrine_path)?;
+        let new_doctrine = remove_markdown_doctrine_block(&existing_doctrine);
+        if new_doctrine != existing_doctrine {
+            fs::write(&doctrine_path, new_doctrine)?;
+        }
     }
 
     Ok(CodexInstallPaths {
