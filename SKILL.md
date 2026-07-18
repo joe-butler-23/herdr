@@ -16,7 +16,6 @@ this means you can:
 - split panes and run commands in them
 - start servers, watch logs, and run tests in sibling panes
 - wait for specific output before continuing
-- wait for another agent to finish
 - spawn more agent instances
 
 the `herdr` binary is available in your PATH. its workspace, tab, pane, and wait commands talk to the running herdr instance over a local unix socket.
@@ -158,7 +157,7 @@ block until another agent reaches a specific status:
 herdr wait agent-status 1-1 --status done --timeout 60000
 ```
 
-use this when you want the same `done` / `idle` distinction the UI shows.
+never use this to coordinate with a worker you spawned — that is the polling the delegation doctrine prohibits; worker completion arrives by mail while you are idle. it is a fallback for panes without mail support only.
 
 ## send text or keys to a pane
 
