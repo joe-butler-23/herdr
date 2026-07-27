@@ -1,0 +1,1 @@
+{"id":"int-53e9fe204b64639cddb33fe7caf9262c","kind":"field_change","created_at":"2026-07-27T16:19:36.314948144Z","actor":"Joe Butler","issue_id":"herdr-dlh","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"commit=d8b37fb; proof=15 OpenCode tests, 2636 Rust tests, 12 marketplace tests, 59 maintenance tests, Linux and Windows strict clippy"}}
