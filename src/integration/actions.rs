@@ -150,16 +150,17 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
         }
         crate::api::schema::IntegrationTarget::Opencode => {
             let installed = install_opencode()?;
-            vec![
-                format!(
-                    "installed opencode integration plugin to {}",
-                    installed.plugin_path.display()
-                ),
-                format!(
-                    "ensured opencode delegation doctrine at {}",
+            let mut messages = vec![format!(
+                "installed opencode integration plugin to {}",
+                installed.plugin_path.display()
+            )];
+            if installed.removed_legacy_doctrine {
+                messages.push(format!(
+                    "removed legacy herdr delegation doctrine from {}",
                     installed.doctrine_path.display()
-                ),
-            ]
+                ));
+            }
+            messages
         }
         crate::api::schema::IntegrationTarget::Kilo => {
             let installed = install_kilo()?;

@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: Manage herdr panes beyond worker delegation — workspaces, tabs, splits, sibling shells, servers, log streams, output reads, and wait conditions through the `herdr` CLI over the local unix socket. Do NOT load this skill for spawning workers, worker mail, or closing worker panes; the herdr delegation doctrine in your global instructions covers those completely. Use only inside herdr (`HERDR_ENV=1`) and only when the task needs pane/workspace control beyond delegation. If `HERDR_ENV` is not `1`, stop instead of inspecting or controlling herdr.
+description: Manage herdr panes beyond worker delegation — workspaces, tabs, splits, sibling shells, servers, log streams, output reads, and wait conditions through the `herdr` CLI over the local unix socket. Do NOT load this skill for spawning workers, worker mail, or closing worker panes; Herdr-injected session context covers those completely. Use only inside herdr (`HERDR_ENV=1`) and only when the task needs pane/workspace control beyond delegation. If `HERDR_ENV` is not `1`, stop instead of inspecting or controlling herdr.
 ---
 
 # herdr — agent skill
@@ -328,10 +328,10 @@ interim `done` mail that is not the real completion; judge completion by
 the mail's content, not just its `done` kind — the real completion mail
 arrives only after the orchestrator replies and the worker finishes its
 next turn. standalone panes (no parent) never send automatic mail. `herdr
-integration install` also installs this delegation doctrine into
-claude/codex/opencode's global instructions, so a worker running any of
-those agents already knows these rules without being told them in its
-task prompt.
+integration install` embeds this delegation doctrine in the
+claude/codex/opencode integration and injects it only into sessions
+running inside Herdr, so a worker already knows these rules without being
+told them in its task prompt and ordinary sessions carry no Herdr context.
 
 once you have read a worker's final done-mail and integrated/verified its
 work, close its pane: `herdr pane close <pane_id>`. skip this only if you

@@ -10,6 +10,7 @@ pub(super) fn run_integration_command(args: &[String]) -> std::io::Result<i32> {
         "install" => integration_install(&args[1..]),
         "uninstall" => integration_uninstall(&args[1..]),
         "status" => integration_status(&args[1..]),
+        "check" => integration_check(&args[1..]),
         "help" | "--help" | "-h" => {
             print_integration_help();
             Ok(0)
@@ -38,23 +39,57 @@ fn integration_status(args: &[String]) -> std::io::Result<i32> {
 
     for status in crate::integration::installed_integration_statuses() {
         let target = crate::integration::integration_target_label(status.target);
-        let version = match status.installed_version {
-            Some(version) => format!("v{version}"),
-            None => "legacy".to_string(),
-        };
-        let state = match status.state {
-            crate::integration::IntegrationStatusKind::NotInstalled => "not installed".to_string(),
-            crate::integration::IntegrationStatusKind::Current => {
-                format!("current ({version})")
-            }
-            crate::integration::IntegrationStatusKind::Outdated => {
-                format!("outdated ({version} < v{})", status.expected_version)
-            }
-        };
+        let state = integration_state_label(&status);
         println!("{target}: {state} ({})", status.path.display());
     }
 
     Ok(0)
+}
+
+fn integration_check(args: &[String]) -> std::io::Result<i32> {
+    let Some(target) = parse_integration_target(args, "check")? else {
+        return Ok(2);
+    };
+
+    let status = match crate::integration::integration_status(target) {
+        Ok(status) => status,
+        Err(err) => {
+            eprintln!("{err}");
+            return Ok(1);
+        }
+    };
+    let target = crate::integration::integration_target_label(status.target);
+    let state = integration_state_label(&status);
+    let message = format!("{target}: {state} ({})", status.path.display());
+
+    if status.state == crate::integration::IntegrationStatusKind::Current {
+        println!("{message}");
+        Ok(0)
+    } else {
+        eprintln!("{message}");
+        Ok(1)
+    }
+}
+
+fn integration_state_label(status: &crate::integration::IntegrationStatus) -> String {
+    let version = match status.installed_version {
+        Some(version) => format!("v{version}"),
+        None => "legacy".to_string(),
+    };
+    match status.state {
+        crate::integration::IntegrationStatusKind::NotInstalled => "not installed".to_string(),
+        crate::integration::IntegrationStatusKind::Current => format!("current ({version})"),
+        crate::integration::IntegrationStatusKind::Outdated
+            if status
+                .installed_version
+                .is_some_and(|version| version >= status.expected_version) =>
+        {
+            format!("stale ({version})")
+        }
+        crate::integration::IntegrationStatusKind::Outdated => {
+            format!("outdated ({version} < v{})", status.expected_version)
+        }
+    }
 }
 
 fn integration_install(args: &[String]) -> std::io::Result<i32> {
@@ -169,4 +204,5 @@ fn print_integration_help() {
     eprintln!("  herdr integration uninstall qodercli");
     eprintln!("  herdr integration uninstall cursor");
     eprintln!("  herdr integration status [--outdated-only]");
+    eprintln!("  herdr integration check <target>");
 }

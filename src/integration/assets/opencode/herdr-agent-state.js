@@ -8,6 +8,7 @@ import net from "node:net";
 
 const SOURCE = "herdr:opencode";
 const AGENT = "opencode";
+const DELEGATION_DOCTRINE = __HERDR_DELEGATION_DOCTRINE_JAVASCRIPT__;
 let reportSeq = Date.now() * 1000;
 
 // Subagent (task tool) sessions carry a parentID; the main agent session does
@@ -186,15 +187,27 @@ async function fetchLastAssistantMessage(client, sessionID) {
 }
 
 export const HerdrAgentStatePlugin = async ({ client } = {}) => {
-  if (
-    process.env.HERDR_ENV !== "1" ||
-    !process.env.HERDR_SOCKET_PATH ||
-    !process.env.HERDR_PANE_ID
-  ) {
+  if (process.env.HERDR_ENV !== "1") {
     return {};
   }
 
+  const hooks = {
+    "experimental.chat.system.transform": async (_input, output) => {
+      if (!Array.isArray(output?.system)) {
+        return;
+      }
+      if (!output.system.includes(DELEGATION_DOCTRINE)) {
+        output.system.push(DELEGATION_DOCTRINE);
+      }
+    },
+  };
+
+  if (!process.env.HERDR_SOCKET_PATH || !process.env.HERDR_PANE_ID) {
+    return hooks;
+  }
+
   return {
+    ...hooks,
     "chat.message": async ({ sessionID }) => {
       if (sessionID && childSessions.has(sessionID)) {
         return;

@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 
 use super::command::{hook_command, shell_single_quote};
 use super::config_edit::{
-    build_codex_config_with_hooks, build_kimi_config_with_hooks, build_markdown_doctrine_block,
-    ensure_command_hook, ensure_direct_command_hook, ensure_hermes_plugin_enabled,
-    ensure_hooks_object, ensure_simple_command_hook, hooks_object_if_present,
-    remove_direct_hook_commands, remove_hermes_plugin_enabled, remove_hook_commands,
-    remove_kimi_config_block, remove_markdown_doctrine_block, remove_simple_command_hook,
+    build_codex_config_with_hooks, build_kimi_config_with_hooks, ensure_command_hook,
+    ensure_direct_command_hook, ensure_hermes_plugin_enabled, ensure_hooks_object,
+    ensure_simple_command_hook, hooks_object_if_present, remove_direct_hook_commands,
+    remove_hermes_plugin_enabled, remove_hook_commands, remove_kimi_config_block,
+    remove_markdown_doctrine_block, remove_simple_command_hook,
 };
 use super::env::{
     claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir, hermes_dir,
@@ -30,11 +30,10 @@ use super::types::{
     QodercliUninstallResult,
 };
 use super::{
-    render_hook_asset, CLAUDE_HOOK_ASSET, CLAUDE_HOOK_INSTALL_NAME, CODEX_HOOK_ASSET,
-    CODEX_HOOK_INSTALL_NAME,
-    COPILOT_HOOK_ASSET, COPILOT_HOOK_EVENTS, COPILOT_HOOK_INSTALL_NAME,
-    COPILOT_REMOVED_LIFECYCLE_HOOK_EVENTS, CURSOR_HOOK_ASSET, CURSOR_HOOK_INSTALL_NAME,
-    DEVIN_HOOK_ASSET, DEVIN_HOOK_EVENTS, DEVIN_HOOK_INSTALL_NAME,
+    render_hook_asset, render_opencode_plugin_asset, CLAUDE_HOOK_ASSET, CLAUDE_HOOK_INSTALL_NAME,
+    CODEX_HOOK_ASSET, CODEX_HOOK_INSTALL_NAME, COPILOT_HOOK_ASSET, COPILOT_HOOK_EVENTS,
+    COPILOT_HOOK_INSTALL_NAME, COPILOT_REMOVED_LIFECYCLE_HOOK_EVENTS, CURSOR_HOOK_ASSET,
+    CURSOR_HOOK_INSTALL_NAME, DEVIN_HOOK_ASSET, DEVIN_HOOK_EVENTS, DEVIN_HOOK_INSTALL_NAME,
     DEVIN_REMOVED_LIFECYCLE_HOOK_EVENTS, DROID_HOOK_ASSET, DROID_HOOK_EVENTS,
     DROID_HOOK_INSTALL_NAME, DROID_REMOVED_LIFECYCLE_HOOK_EVENTS, HERMES_PLUGIN_INIT_ASSET,
     HERMES_PLUGIN_INIT_INSTALL_NAME, HERMES_PLUGIN_MANIFEST_ASSET,
@@ -530,22 +529,18 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
     fs::create_dir_all(&plugins_dir)?;
 
     let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-    fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
+    fs::write(
+        &plugin_path,
+        render_opencode_plugin_asset(OPENCODE_PLUGIN_ASSET),
+    )?;
 
     let doctrine_path = dir.join("AGENTS.md");
-    let existing_doctrine = if doctrine_path.is_file() {
-        fs::read_to_string(&doctrine_path)?
-    } else {
-        String::new()
-    };
-    let new_doctrine = build_markdown_doctrine_block(&existing_doctrine);
-    if new_doctrine != existing_doctrine {
-        fs::write(&doctrine_path, new_doctrine)?;
-    }
+    let removed_legacy_doctrine = remove_opencode_legacy_doctrine(&doctrine_path)?;
 
     Ok(OpenCodeInstallPaths {
         plugin_path,
         doctrine_path,
+        removed_legacy_doctrine,
     })
 }
 
@@ -957,15 +952,7 @@ pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
     let removed_plugin = remove_file_if_exists(&plugin_path)?;
 
     let doctrine_path = dir.join("AGENTS.md");
-    let mut updated_doctrine = false;
-    if doctrine_path.is_file() {
-        let existing_doctrine = fs::read_to_string(&doctrine_path)?;
-        let new_doctrine = remove_markdown_doctrine_block(&existing_doctrine);
-        if new_doctrine != existing_doctrine {
-            fs::write(&doctrine_path, new_doctrine)?;
-            updated_doctrine = true;
-        }
-    }
+    let updated_doctrine = remove_opencode_legacy_doctrine(&doctrine_path)?;
 
     Ok(OpenCodeUninstallResult {
         plugin_path,
@@ -973,6 +960,66 @@ pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
         removed_plugin,
         updated_doctrine,
     })
+}
+
+fn remove_opencode_legacy_doctrine(doctrine_path: &Path) -> io::Result<bool> {
+    if !doctrine_path.is_file() {
+        return Ok(false);
+    }
+
+    let existing_doctrine = fs::read_to_string(doctrine_path)?;
+    validate_opencode_legacy_doctrine(&existing_doctrine, doctrine_path)?;
+    let new_doctrine = remove_markdown_doctrine_block(&existing_doctrine);
+    if new_doctrine == existing_doctrine {
+        return Ok(false);
+    }
+
+    if new_doctrine.trim().is_empty() {
+        fs::remove_file(doctrine_path)?;
+    } else {
+        fs::write(doctrine_path, new_doctrine)?;
+    }
+    Ok(true)
+}
+
+fn validate_opencode_legacy_doctrine(content: &str, doctrine_path: &Path) -> io::Result<()> {
+    let mut in_block = false;
+    for line in content.lines() {
+        match line.trim() {
+            super::DOCTRINE_BLOCK_BEGIN if in_block => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "malformed legacy herdr delegation doctrine in {}: nested start marker",
+                        doctrine_path.display()
+                    ),
+                ));
+            }
+            super::DOCTRINE_BLOCK_BEGIN => in_block = true,
+            super::DOCTRINE_BLOCK_END if !in_block => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "malformed legacy herdr delegation doctrine in {}: end marker without start",
+                        doctrine_path.display()
+                    ),
+                ));
+            }
+            super::DOCTRINE_BLOCK_END => in_block = false,
+            _ => {}
+        }
+    }
+
+    if in_block {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "malformed legacy herdr delegation doctrine in {}: missing end marker",
+                doctrine_path.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn uninstall_kilo() -> io::Result<KiloUninstallResult> {

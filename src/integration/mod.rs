@@ -10,7 +10,9 @@ mod types;
 mod version;
 
 pub(crate) use actions::{install_target, uninstall_target};
-pub(crate) use doctrine::{render_hook_asset, DELEGATION_DOCTRINE};
+#[cfg(test)]
+pub(crate) use doctrine::DELEGATION_DOCTRINE;
+pub(crate) use doctrine::{render_hook_asset, render_opencode_plugin_asset};
 #[cfg(test)]
 pub(crate) use env::integration_env_lock;
 pub(crate) use env::{
@@ -18,8 +20,8 @@ pub(crate) use env::{
     HERDR_PARENT_TERMINAL_ID_ENV_VAR, HERDR_TAB_ID_ENV_VAR, HERDR_WORKSPACE_ID_ENV_VAR,
 };
 pub(crate) use registry::{
-    installed_integration_statuses, integration_recommendations, integration_target_label,
-    print_outdated_update_notice,
+    installed_integration_statuses, integration_recommendations, integration_status,
+    integration_target_label, print_outdated_update_notice,
 };
 pub(crate) use types::{IntegrationRecommendation, IntegrationStatus, IntegrationStatusKind};
 
@@ -183,10 +185,9 @@ const CURSOR_HOOK_INSTALL_NAME: &str = "herdr-agent-state.sh";
 const CURSOR_HOOK_ASSET: &str = include_str!("assets/cursor/herdr-agent-state.sh");
 const CURSOR_INTEGRATION_VERSION: u32 = 1;
 const INTEGRATION_VERSION_MARKER: &str = "HERDR_INTEGRATION_VERSION=";
-// Managed block markers for the delegation doctrine installed into each
-// agent's global markdown instructions file (claude/CLAUDE.md, codex/AGENTS.md,
-// opencode/AGENTS.md). HTML comments so the markers stay invisible when the
-// host file is rendered as markdown.
+// Managed block markers for legacy global delegation doctrine. Current
+// integrations remove these blocks and inject doctrine only into sessions
+// running inside Herdr.
 const DOCTRINE_BLOCK_BEGIN: &str = "<!-- >>> herdr delegation doctrine -->";
 const DOCTRINE_BLOCK_END: &str = "<!-- <<< herdr delegation doctrine -->";
 

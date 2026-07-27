@@ -45,6 +45,7 @@ pub(crate) struct DroidInstallPaths {
 pub(crate) struct OpenCodeInstallPaths {
     pub plugin_path: PathBuf,
     pub doctrine_path: PathBuf,
+    pub removed_legacy_doctrine: bool,
 }
 
 #[derive(Debug)]

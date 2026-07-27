@@ -10,6 +10,7 @@ use super::*;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::{json, Map, Value};
 
@@ -2295,7 +2296,85 @@ fn install_opencode_writes_plugin_to_plugins_dir() {
             .join("plugins")
             .join(OPENCODE_PLUGIN_INSTALL_NAME)
     );
-    assert_eq!(plugin_content, OPENCODE_PLUGIN_ASSET);
+    assert_eq!(
+        plugin_content,
+        render_opencode_plugin_asset(OPENCODE_PLUGIN_ASSET)
+    );
+    assert!(plugin_content.contains("\"experimental.chat.system.transform\""));
+    assert!(!plugin_content.contains("__HERDR_DELEGATION_DOCTRINE_JAVASCRIPT__"));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn rendered_opencode_plugin_injects_doctrine_once_only_inside_herdr() {
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("skipping OpenCode plugin runtime test because node is unavailable");
+        return;
+    }
+
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    fs::write(opencode_dir.join("package.json"), r#"{"type":"module"}"#).unwrap();
+    std::env::set_var("HOME", &home);
+    let installed = install_opencode().unwrap();
+
+    let runner = r#"
+import { pathToFileURL } from "node:url";
+const pluginModule = await import(pathToFileURL(process.argv[1]).href);
+const hooks = await pluginModule.HerdrAgentStatePlugin();
+const output = { system: ["base"] };
+const transform = hooks["experimental.chat.system.transform"];
+if (transform) {
+  await transform({}, output);
+  await transform({}, output);
+}
+process.stdout.write(JSON.stringify({
+  hasTransform: typeof transform === "function",
+  system: output.system,
+}));
+"#;
+    let run_plugin = |inside_herdr: bool| {
+        let mut command = Command::new("node");
+        command
+            .args(["--input-type=module", "--eval", runner])
+            .arg(&installed.plugin_path)
+            .env_remove("HERDR_SOCKET_PATH")
+            .env_remove("HERDR_PANE_ID");
+        if inside_herdr {
+            command.env("HERDR_ENV", "1");
+        } else {
+            command.env_remove("HERDR_ENV");
+        }
+        command.output().unwrap()
+    };
+
+    let outside = run_plugin(false);
+    assert!(
+        outside.status.success(),
+        "outside-Herdr plugin run failed: {}",
+        String::from_utf8_lossy(&outside.stderr)
+    );
+    let outside: Value = serde_json::from_slice(&outside.stdout).unwrap();
+    assert_eq!(outside["hasTransform"], false);
+    assert_eq!(outside["system"], json!(["base"]));
+
+    let inside = run_plugin(true);
+    assert!(
+        inside.status.success(),
+        "inside-Herdr plugin run failed: {}",
+        String::from_utf8_lossy(&inside.stderr)
+    );
+    let inside: Value = serde_json::from_slice(&inside.stdout).unwrap();
+    assert_eq!(inside["hasTransform"], true);
+    assert_eq!(
+        inside["system"],
+        json!(["base", DELEGATION_DOCTRINE.trim_end()])
+    );
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -2341,7 +2420,7 @@ fn install_opencode_errors_when_config_dir_missing() {
 }
 
 #[test]
-fn install_opencode_writes_doctrine_block_and_creates_file_if_absent() {
+fn install_opencode_does_not_create_global_instructions_file() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
@@ -2350,19 +2429,17 @@ fn install_opencode_writes_doctrine_block_and_creates_file_if_absent() {
     std::env::set_var("HOME", &home);
 
     let installed = install_opencode().unwrap();
-    let doctrine = fs::read_to_string(&installed.doctrine_path).unwrap();
 
     assert_eq!(installed.doctrine_path, opencode_dir.join("AGENTS.md"));
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
-    assert!(doctrine.contains(DELEGATION_DOCTRINE.trim_end_matches('\n')));
+    assert!(!installed.removed_legacy_doctrine);
+    assert!(!installed.doctrine_path.exists());
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_opencode_doctrine_block_is_idempotent_and_preserves_user_content() {
+fn install_opencode_strips_legacy_doctrine_and_preserves_user_content() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
@@ -2370,20 +2447,65 @@ fn install_opencode_doctrine_block_is_idempotent_and_preserves_user_content() {
     fs::create_dir_all(&opencode_dir).unwrap();
     fs::write(
         opencode_dir.join("AGENTS.md"),
-        "# my opencode notes\n\nkeep this.\n",
+        build_markdown_doctrine_block("# my opencode notes\n\nkeep this.\n"),
     )
     .unwrap();
     std::env::set_var("HOME", &home);
 
-    install_opencode().unwrap();
-    install_opencode().unwrap();
+    let first = install_opencode().unwrap();
+    let second = install_opencode().unwrap();
 
     let doctrine = fs::read_to_string(opencode_dir.join("AGENTS.md")).unwrap();
 
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_BEGIN).count(), 1);
-    assert_eq!(doctrine.matches(DOCTRINE_BLOCK_END).count(), 1);
+    assert!(first.removed_legacy_doctrine);
+    assert!(!second.removed_legacy_doctrine);
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_BEGIN));
+    assert!(!doctrine.contains(DOCTRINE_BLOCK_END));
     assert!(doctrine.contains("# my opencode notes"));
     assert!(doctrine.contains("keep this."));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_removes_legacy_only_instructions_file() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    let doctrine_path = opencode_dir.join("AGENTS.md");
+    fs::write(&doctrine_path, build_markdown_doctrine_block("")).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let installed = install_opencode().unwrap();
+
+    assert!(installed.removed_legacy_doctrine);
+    assert!(!doctrine_path.exists());
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_rejects_malformed_legacy_block_without_changing_instructions() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    let doctrine_path = opencode_dir.join("AGENTS.md");
+    let malformed =
+        format!("# keep\n\n{DOCTRINE_BLOCK_BEGIN}\nlegacy without an end marker\n\n# also keep\n");
+    fs::write(&doctrine_path, &malformed).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let err = install_opencode().unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("missing end marker"));
+    assert_eq!(fs::read_to_string(&doctrine_path).unwrap(), malformed);
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -2404,6 +2526,11 @@ fn uninstall_opencode_removes_doctrine_block_preserves_other_content() {
     std::env::set_var("HOME", &home);
 
     install_opencode().unwrap();
+    fs::write(
+        opencode_dir.join("AGENTS.md"),
+        build_markdown_doctrine_block("# my opencode notes\n\nkeep this.\n"),
+    )
+    .unwrap();
     let result = uninstall_opencode().unwrap();
     let doctrine = fs::read_to_string(&result.doctrine_path).unwrap();
 
@@ -2412,6 +2539,54 @@ fn uninstall_opencode_removes_doctrine_block_preserves_other_content() {
     assert!(!doctrine.contains(DOCTRINE_BLOCK_END));
     assert!(doctrine.contains("# my opencode notes"));
     assert!(doctrine.contains("keep this."));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn opencode_status_requires_exact_plugin_bytes_and_no_legacy_doctrine() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    let plugins_dir = opencode_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
+    fs::write(
+        &plugin_path,
+        render_opencode_plugin_asset(OPENCODE_PLUGIN_ASSET),
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    let current = integration_status(crate::api::schema::IntegrationTarget::Opencode).unwrap();
+    assert_eq!(current.state, IntegrationStatusKind::Current);
+
+    fs::write(
+        opencode_dir.join("AGENTS.md"),
+        build_markdown_doctrine_block("# keep\n"),
+    )
+    .unwrap();
+    let legacy_doctrine =
+        integration_status(crate::api::schema::IntegrationTarget::Opencode).unwrap();
+    assert_eq!(legacy_doctrine.state, IntegrationStatusKind::Outdated);
+
+    fs::write(opencode_dir.join("AGENTS.md"), "# keep\n").unwrap();
+    fs::write(
+        &plugin_path,
+        format!(
+            "{}\n// local drift with unchanged version\n",
+            render_opencode_plugin_asset(OPENCODE_PLUGIN_ASSET).trim_end()
+        ),
+    )
+    .unwrap();
+    let drifted = integration_status(crate::api::schema::IntegrationTarget::Opencode).unwrap();
+    assert_eq!(
+        drifted.installed_version,
+        Some(OPENCODE_INTEGRATION_VERSION)
+    );
+    assert_eq!(drifted.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);

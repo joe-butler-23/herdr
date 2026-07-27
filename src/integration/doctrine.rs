@@ -1,11 +1,11 @@
 // Single source of truth for the herdr delegation doctrine.
 //
-// Delivery is progressive-disclosure by session: for claude and codex the
+// Delivery is progressive-disclosure by session. For Claude and Codex the
 // doctrine is embedded into the installed session hook script (via
-// `render_hook_asset`), so it only enters context for sessions actually
-// running inside a herdr pane (`HERDR_ENV=1`); sessions outside herdr never
-// carry it. Opencode has no session-context hook lane, so it keeps the
-// legacy herdr-managed fenced block in its global AGENTS.md.
+// `render_hook_asset`). For OpenCode it is embedded into the plugin and
+// appended through `experimental.chat.system.transform`. Every lane exposes
+// it only to sessions actually running inside a herdr pane (`HERDR_ENV=1`);
+// sessions outside herdr never carry it.
 pub(crate) const DELEGATION_DOCTRINE: &str = r#"## herdr delegation doctrine
 
 this section applies only inside a herdr-managed pane: `HERDR_ENV=1` or
@@ -115,7 +115,39 @@ you are a worker if `HERDR_PARENT_TERMINAL_ID` is set in your environment.
 /// time, so installed hooks stay in sync with this file without depending on
 /// the CLI version available on PATH when the hook runs.
 const DOCTRINE_PLACEHOLDER: &str = "__HERDR_DELEGATION_DOCTRINE__";
+const OPENCODE_DOCTRINE_PLACEHOLDER: &str = "__HERDR_DELEGATION_DOCTRINE_JAVASCRIPT__";
 
 pub(crate) fn render_hook_asset(asset: &str) -> String {
     asset.replace(DOCTRINE_PLACEHOLDER, DELEGATION_DOCTRINE.trim_end())
+}
+
+pub(crate) fn render_opencode_plugin_asset(asset: &str) -> String {
+    asset.replace(
+        OPENCODE_DOCTRINE_PLACEHOLDER,
+        &javascript_string_literal(DELEGATION_DOCTRINE.trim_end()),
+    )
+}
+
+fn javascript_string_literal(value: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => literal.push_str("\\\""),
+            '\\' => literal.push_str("\\\\"),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            '\u{2028}' => literal.push_str("\\u2028"),
+            '\u{2029}' => literal.push_str("\\u2029"),
+            character if character.is_control() => {
+                let _ = write!(literal, "\\u{:04x}", character as u32);
+            }
+            character => literal.push(character),
+        }
+    }
+    literal.push('"');
+    literal
 }

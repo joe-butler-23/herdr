@@ -6,9 +6,11 @@ use serde_json::{json, Map, Value};
 use super::command::{hook_command, legacy_bash_hook_command};
 #[cfg(windows)]
 use super::file_ops::legacy_bash_hook_path;
+#[cfg(test)]
+use super::DELEGATION_DOCTRINE;
 use super::{
-    DELEGATION_DOCTRINE, DOCTRINE_BLOCK_BEGIN, DOCTRINE_BLOCK_END, HERMES_PLUGIN_INSTALL_NAME,
-    KIMI_CONFIG_BLOCK_BEGIN, KIMI_CONFIG_BLOCK_END, KIMI_HOOK_EVENTS,
+    DOCTRINE_BLOCK_BEGIN, DOCTRINE_BLOCK_END, HERMES_PLUGIN_INSTALL_NAME, KIMI_CONFIG_BLOCK_BEGIN,
+    KIMI_CONFIG_BLOCK_END, KIMI_HOOK_EVENTS,
 };
 
 pub(crate) fn ensure_hooks_object<'a>(
@@ -750,11 +752,9 @@ pub(crate) fn remove_kimi_config_block(content: &str) -> String {
     }
 }
 
-// Installs the shared delegation doctrine as a herdr-managed fenced block in
-// an agent's global markdown instructions file (claude/CLAUDE.md,
-// codex/AGENTS.md, opencode/AGENTS.md). Mirrors the kimi TOML config-block
-// pattern above: replace-on-reinstall, idempotent, and additive to any
-// existing file content.
+// Builds the legacy managed block for migration tests. Current integrations
+// inject the doctrine into Herdr sessions instead of global instructions.
+#[cfg(test)]
 pub(crate) fn build_markdown_doctrine_block(content: &str) -> String {
     let mut result = remove_markdown_doctrine_block(content)
         .trim_end_matches('\n')

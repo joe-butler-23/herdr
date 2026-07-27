@@ -1515,6 +1515,70 @@ fn integration_commands_run_locally_when_server_is_missing() {
 }
 
 #[test]
+fn opencode_integration_check_gates_exact_plugin_and_legacy_doctrine_cleanup() {
+    let base = unique_test_dir();
+    let home_dir = base.join("home");
+    let opencode_dir = home_dir.join(".config/opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    let agents_path = opencode_dir.join("AGENTS.md");
+    fs::write(
+        &agents_path,
+        "# keep\n\n<!-- >>> herdr delegation doctrine -->\nlegacy\n<!-- <<< herdr delegation doctrine -->\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_herdr"))
+            .args(args)
+            .env("HOME", &home_dir)
+            .output()
+            .unwrap()
+    };
+
+    let missing = run(&["integration", "check", "opencode"]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("not installed"));
+
+    let installed = run(&["integration", "install", "opencode"]);
+    assert_eq!(installed.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&installed.stdout)
+        .contains("removed legacy herdr delegation doctrine"));
+    let agents = fs::read_to_string(&agents_path).unwrap();
+    assert!(agents.contains("# keep"));
+    assert!(!agents.contains("herdr delegation doctrine"));
+
+    let current = run(&["integration", "check", "opencode"]);
+    assert_eq!(current.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&current.stdout).contains("opencode: current (v12)"));
+
+    let plugin_path = opencode_dir.join("plugins/herdr-agent-state.js");
+    let mut drifted_plugin = fs::read_to_string(&plugin_path).unwrap();
+    drifted_plugin.push_str("// local drift\n");
+    fs::write(&plugin_path, drifted_plugin).unwrap();
+    let stale_plugin = run(&["integration", "check", "opencode"]);
+    assert_eq!(stale_plugin.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&stale_plugin.stderr).contains("opencode: stale (v12)"));
+
+    let reinstalled = run(&["integration", "install", "opencode"]);
+    assert_eq!(reinstalled.status.code(), Some(0));
+    fs::write(
+        &agents_path,
+        "# keep\n\n<!-- >>> herdr delegation doctrine -->\nlegacy\n<!-- <<< herdr delegation doctrine -->\n",
+    )
+    .unwrap();
+    let stale_doctrine = run(&["integration", "check", "opencode"]);
+    assert_eq!(stale_doctrine.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&stale_doctrine.stderr).contains("opencode: stale (v12)"));
+
+    let migrated = run(&["integration", "install", "opencode"]);
+    assert_eq!(migrated.status.code(), Some(0));
+    let migrated_check = run(&["integration", "check", "opencode"]);
+    assert_eq!(migrated_check.status.code(), Some(0));
+
+    cleanup_test_base(&base);
+}
+
+#[test]
 fn integration_status_outdated_only_prints_action_for_legacy_install() {
     let base = unique_test_dir();
     let home_dir = base.join("home");

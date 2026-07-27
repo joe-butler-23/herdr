@@ -650,6 +650,11 @@ fn integration_command() -> Command {
                 .about("Show integration status")
                 .arg(flag("outdated-only")),
         )
+        .subcommand(
+            Command::new("check")
+                .about("Exit successfully only when an integration is current")
+                .arg(integration_target_arg()),
+        )
 }
 
 fn plugin_command() -> Command {

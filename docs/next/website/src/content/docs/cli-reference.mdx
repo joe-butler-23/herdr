@@ -342,7 +342,10 @@ herdr integration uninstall hermes
 herdr integration uninstall qodercli
 herdr integration uninstall cursor
 herdr integration status [--outdated-only]
+herdr integration check <target>
 ```
+
+`integration check` is an exit-code gate: it returns zero only when the selected integration is current. OpenCode additionally requires exact installed plugin bytes and the absence of its legacy global delegation-doctrine block.
 
 ## Plugins
 

@@ -218,6 +218,29 @@ pub(crate) fn installed_integration_statuses() -> Vec<super::IntegrationStatus> 
         .collect()
 }
 
+pub(crate) fn integration_status(
+    target: crate::api::schema::IntegrationTarget,
+) -> io::Result<super::IntegrationStatus> {
+    if !integration_target_supported(target) {
+        return Err(io::Error::other(format!(
+            "{} integration is not supported on this platform",
+            integration_target_label(target)
+        )));
+    }
+
+    let Some((target, path, expected_version)) = integration_specs()
+        .into_iter()
+        .find(|(candidate, _, _)| *candidate == target)
+    else {
+        return Err(io::Error::other(format!(
+            "unknown integration target: {}",
+            integration_target_label(target)
+        )));
+    };
+
+    Ok(integration_status_at(target, path?, expected_version))
+}
+
 pub(crate) fn integration_recommendations() -> Vec<super::IntegrationRecommendation> {
     integration_specs()
         .into_iter()
@@ -376,10 +399,15 @@ pub(crate) fn integration_status_at(
         };
     }
 
-    let installed_version = fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| parse_integration_version(&content));
-    let state = if installed_version.is_some_and(|version| version >= expected_version) {
+    let content = fs::read_to_string(&path).ok();
+    let installed_version = content.as_deref().and_then(parse_integration_version);
+    let is_current = match target {
+        crate::api::schema::IntegrationTarget::Opencode => content
+            .as_deref()
+            .is_some_and(|content| opencode_installation_is_current(&path, content)),
+        _ => installed_version.is_some_and(|version| version >= expected_version),
+    };
+    let state = if is_current {
         super::IntegrationStatusKind::Current
     } else {
         super::IntegrationStatusKind::Outdated
@@ -391,6 +419,25 @@ pub(crate) fn integration_status_at(
         state,
         installed_version,
         expected_version,
+    }
+}
+
+fn opencode_installation_is_current(plugin_path: &Path, content: &str) -> bool {
+    if content != super::render_opencode_plugin_asset(super::OPENCODE_PLUGIN_ASSET) {
+        return false;
+    }
+
+    let Some(config_dir) = plugin_path.parent().and_then(Path::parent) else {
+        return false;
+    };
+    let doctrine_path = config_dir.join("AGENTS.md");
+    match fs::read_to_string(doctrine_path) {
+        Ok(doctrine) => {
+            !doctrine.contains(super::DOCTRINE_BLOCK_BEGIN)
+                && !doctrine.contains(super::DOCTRINE_BLOCK_END)
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
+        Err(_) => false,
     }
 }
 

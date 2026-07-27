@@ -182,9 +182,11 @@ Install the OpenCode plugin:
 herdr integration install opencode
 ```
 
-Herdr writes the plugin to `~/.config/opencode/plugins/herdr-agent-state.js`. The OpenCode config directory must already exist. Uninstall removes only that plugin file.
+Herdr writes the plugin to `~/.config/opencode/plugins/herdr-agent-state.js`. The OpenCode config directory must already exist. The plugin appends Herdr's delegation doctrine through OpenCode's system-transform hook only when `HERDR_ENV=1`; ordinary OpenCode sessions receive no Herdr instructions. Install removes any legacy Herdr-managed doctrine block from `~/.config/opencode/AGENTS.md` while preserving unrelated content. Uninstall removes the plugin and also cleans up a legacy doctrine block if one remains.
 
 The plugin reports lifecycle state and session identity while OpenCode runs inside a Herdr pane. After OpenCode emits a session-bearing event, Herdr can use the reported session id to resume the pane with `opencode --session <id>`. Native screen manifest detection remains available when the plugin is not installed.
+
+Use `herdr integration check opencode` as an automation gate. It exits successfully only when the installed plugin exactly matches the bundled asset and no legacy global doctrine block remains.
 
 ## Kilo Code CLI
 
