@@ -525,6 +525,9 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
         )));
     }
 
+    let doctrine_path = dir.join("AGENTS.md");
+    validate_opencode_legacy_doctrine_file(&doctrine_path)?;
+
     let plugins_dir = dir.join("plugins");
     fs::create_dir_all(&plugins_dir)?;
 
@@ -534,7 +537,6 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
         render_opencode_plugin_asset(OPENCODE_PLUGIN_ASSET),
     )?;
 
-    let doctrine_path = dir.join("AGENTS.md");
     let removed_legacy_doctrine = remove_opencode_legacy_doctrine(&doctrine_path)?;
 
     Ok(OpenCodeInstallPaths {
@@ -980,6 +982,14 @@ fn remove_opencode_legacy_doctrine(doctrine_path: &Path) -> io::Result<bool> {
         fs::write(doctrine_path, new_doctrine)?;
     }
     Ok(true)
+}
+
+fn validate_opencode_legacy_doctrine_file(doctrine_path: &Path) -> io::Result<()> {
+    if !doctrine_path.is_file() {
+        return Ok(());
+    }
+
+    validate_opencode_legacy_doctrine(&fs::read_to_string(doctrine_path)?, doctrine_path)
 }
 
 fn validate_opencode_legacy_doctrine(content: &str, doctrine_path: &Path) -> io::Result<()> {

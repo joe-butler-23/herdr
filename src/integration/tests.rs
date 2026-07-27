@@ -104,6 +104,15 @@ fn clear_integration_path_env() {
     std::env::remove_var(CURSOR_CONFIG_DIR_ENV_VAR);
 }
 
+fn sorted_directory_entries(path: &Path) -> Vec<String> {
+    let mut entries = fs::read_dir(path)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
+}
+
 fn kimi_hook_command(hook_path: &Path, action: &str) -> String {
     hook_command(hook_path, Some(action))
 }
@@ -2489,23 +2498,52 @@ fn install_opencode_removes_legacy_only_instructions_file() {
 }
 
 #[test]
-fn install_opencode_rejects_malformed_legacy_block_without_changing_instructions() {
+fn install_opencode_rejects_malformed_legacy_block_before_any_mutation() {
     let _lock = integration_env_lock();
     let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    fs::create_dir_all(&opencode_dir).unwrap();
-    let doctrine_path = opencode_dir.join("AGENTS.md");
     let malformed =
         format!("# keep\n\n{DOCTRINE_BLOCK_BEGIN}\nlegacy without an end marker\n\n# also keep\n");
-    fs::write(&doctrine_path, &malformed).unwrap();
-    std::env::set_var("HOME", &home);
 
-    let err = install_opencode().unwrap_err();
+    for existing_plugin in [None, Some(b"preserve existing plugin bytes".as_slice())] {
+        let scenario = if existing_plugin.is_some() {
+            "existing-plugin"
+        } else {
+            "missing-plugin-dir"
+        };
+        let home = base.join(scenario).join("home");
+        let opencode_dir = home.join(".config/opencode");
+        let plugins_dir = opencode_dir.join("plugins");
+        let doctrine_path = opencode_dir.join("AGENTS.md");
+        let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
+        fs::create_dir_all(&opencode_dir).unwrap();
+        fs::write(&doctrine_path, malformed.as_bytes()).unwrap();
+        if let Some(plugin) = existing_plugin {
+            fs::create_dir_all(&plugins_dir).unwrap();
+            fs::write(&plugin_path, plugin).unwrap();
+        }
+        let entries_before = sorted_directory_entries(&opencode_dir);
+        let plugin_entries_before = plugins_dir
+            .is_dir()
+            .then(|| sorted_directory_entries(&plugins_dir));
+        std::env::set_var("HOME", &home);
 
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("missing end marker"));
-    assert_eq!(fs::read_to_string(&doctrine_path).unwrap(), malformed);
+        let err = install_opencode().unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("missing end marker"));
+        assert_eq!(fs::read(&doctrine_path).unwrap(), malformed.as_bytes());
+        assert_eq!(sorted_directory_entries(&opencode_dir), entries_before);
+        assert_eq!(
+            plugins_dir
+                .is_dir()
+                .then(|| sorted_directory_entries(&plugins_dir)),
+            plugin_entries_before
+        );
+        match existing_plugin {
+            Some(plugin) => assert_eq!(fs::read(&plugin_path).unwrap(), plugin),
+            None => assert!(!plugins_dir.exists()),
+        }
+    }
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
