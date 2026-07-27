@@ -15,11 +15,12 @@ The skill tells an agent to use the `herdr` CLI when `HERDR_ENV=1` is set. That 
 
 With the skill installed, an agent can:
 
-- inspect workspaces, tabs, panes, and neighboring agents
-- split panes and run commands without stealing focus
-- read pane output and recent logs
-- wait for servers, tests, or another agent to finish
-- start helper agents in sibling panes
+- inspect workspaces, tabs, and non-worker support panes
+- split support panes and run commands without stealing focus
+- read server, test, and log output
+- wait for process readiness or completion
+
+Worker spawning, mail, and cleanup are deliberately not taught in the skill. Official Claude Code, Codex, and OpenCode integrations inject that separate doctrine only into sessions running inside Herdr.
 
 The skill is not a separate app or service. It is a markdown instruction file for agents.
 
@@ -58,7 +59,7 @@ This prevents an agent outside Herdr from trying to control a session it does no
 
 ## Agent-facing reference
 
-The full command guide lives in the skill file itself. It covers pane IDs, `pane split`, `pane run`, `pane read`, `wait output`, `wait agent-status`, workspace and tab commands, and coordination recipes.
+The full operator guide lives in the skill file itself. It covers volatile pane IDs, `pane split`, `pane run`, `pane read`, `wait output`, support-process recipes, and workspace and tab commands.
 
 Read the source file here:
 

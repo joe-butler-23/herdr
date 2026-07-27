@@ -55,7 +55,7 @@ fn integration_check(args: &[String]) -> std::io::Result<i32> {
         Ok(status) => status,
         Err(err) => {
             eprintln!("{err}");
-            return Ok(1);
+            return Ok(2);
         }
     };
     let target = crate::integration::integration_target_label(status.target);

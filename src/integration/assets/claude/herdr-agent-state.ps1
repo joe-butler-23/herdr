@@ -82,3 +82,9 @@ try {
     & herdr @args 2>$null | Out-Null
 } catch {
 }
+
+if ($Action -eq "session") {
+@'
+__HERDR_DELEGATION_DOCTRINE__
+'@
+}

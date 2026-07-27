@@ -1,433 +1,158 @@
 ---
 name: herdr
-description: Manage herdr panes beyond worker delegation — workspaces, tabs, splits, sibling shells, servers, log streams, output reads, and wait conditions through the `herdr` CLI over the local unix socket. Do NOT load this skill for spawning workers, worker mail, or closing worker panes; Herdr-injected session context covers those completely. Use only inside herdr (`HERDR_ENV=1`) and only when the task needs pane/workspace control beyond delegation. If `HERDR_ENV` is not `1`, stop instead of inspecting or controlling herdr.
+description: Manage Herdr workspaces, tabs, and non-worker support panes for shells, servers, tests, logs, output reads, and process wait conditions. Use only inside Herdr (`HERDR_ENV=1`). If `HERDR_ENV` is not `1`, stop instead of inspecting or controlling Herdr.
 ---
 
-# herdr — agent skill
+# Herdr operator skill
 
-before using this skill, check that `HERDR_ENV=1`. if it is not set to `1`, then you are not running inside a herdr-managed pane and stop. that is fine, but it may impact your ability to test functionality.
+Before using this skill, check that `HERDR_ENV=1`. If it is not exactly `1`, say that you are not running inside a Herdr-managed pane and stop. Do not inspect or control a focused Herdr pane from outside Herdr.
 
-if you are running inside herdr already, then herdr is a terminal-native agent multiplexer. herdr gives you workspaces, tabs, and panes — each pane is a real terminal with its own shell, agent, server, or log stream — and you can control all of it from the cli.
+Worker delegation, mail, and lifecycle are owned by Herdr-injected session context; do not use this skill for those operations.
 
-this means you can:
+Use this skill to manage:
 
-- see what other panes and agents are doing
-- create tabs for separate subcontexts inside one workspace
-- split panes and run commands in them
-- start servers, watch logs, and run tests in sibling panes
-- wait for specific output before continuing
-- spawn more agent instances
+- workspaces and tabs
+- non-worker support shells
+- development servers and log streams
+- test and build processes
+- output-based process readiness
 
-the `herdr` binary is available in your PATH. its workspace, tab, pane, and wait commands talk to the running herdr instance over a local unix socket.
+The `herdr` CLI talks to the running Herdr instance over its local Unix socket. For the raw protocol and full API, read the [socket API documentation](https://herdr.dev/docs/socket-api/).
 
-if you need the raw protocol or full api reference, read the [socket api docs](https://herdr.dev/docs/socket-api/).
+## Concepts
 
-## concepts
+- A workspace is a project context containing one or more tabs.
+- A tab is a subcontext containing one or more panes.
+- A pane is a terminal split running one process.
+- Workspace IDs look like `w1`, tab IDs like `w1:t1`, and pane IDs like `w1:p1`.
+- IDs describe the live session. Re-read them from list or create responses before acting instead of relying on earlier context.
 
-**workspaces** are project contexts. each workspace has one or more tabs. unless manually renamed, a workspace's label follows the first tab's root pane — usually the repo name, otherwise the root pane's current folder name.
+## Operating rules
 
-**tabs** are subcontexts inside a workspace. each tab has one or more panes.
+1. Confirm `HERDR_ENV=1`.
+2. Run `herdr pane list` before controlling panes. The focused pane is yours.
+3. Re-read current IDs before focus, split, run, send, or close operations.
+4. Parse new IDs from command JSON instead of guessing.
+5. Keep your pane focused when creating support panes unless the user explicitly asks otherwise. Use `--no-focus`.
+6. Treat an `nvim` pane as the user's notes pane. Never send input to it unless explicitly asked. Before ending your turn, read its visible content and incorporate any notes addressed to you.
+7. Use pane read, run, send, wait, and close commands only on confirmed non-worker support panes. Do not use them to coordinate with an agent.
 
-**panes** are terminal splits inside a tab. each pane runs its own process — a shell, an agent, a server, anything.
-
-**agent status** is detected automatically by herdr. the api exposes one public field for it:
-
-- `agent_status` — `idle`, `working`, `blocked`, `done`, `unknown`
-
-`done` means the agent finished, but you have not looked at that finished pane yet.
-
-plain shells still exist as panes, but herdr's sidebar agent section intentionally focuses on detected agents rather than listing every shell.
-
-**ids** — workspace ids look like `1`, `2`. tab ids look like `1:1`, `1:2`, `2:1`. pane ids look like `1-1`, `1-2`, `2-1`. these are compact public ids for the current live session.
-
-important: ids can compact when tabs, panes, or workspaces are closed. do not treat them as durable ids. re-read ids from `workspace list`, `tab list`, `pane list`, or create/split responses when you need a current id. do not guess that an older `1-3` is still the same pane later.
-
-## discover yourself
-
-see what panes exist and which one is focused:
+## Inspect the live layout
 
 ```bash
 herdr pane list
-```
-
-the focused pane is yours. other panes are your neighbors.
-
-list workspaces:
-
-```bash
 herdr workspace list
+herdr tab list --workspace w1
 ```
 
-## tab management
-
-list tabs in the current workspace:
+## Manage tabs
 
 ```bash
-herdr tab list --workspace 1
+herdr tab create --workspace w1 --no-focus
+herdr tab create --workspace w1 --label "logs" --no-focus
+herdr tab rename w1:t2 "logs"
+herdr tab focus w1:t2
+herdr tab close w1:t2
 ```
 
-create a new tab:
+Re-read the tab list immediately before focus or close.
+
+## Read a support pane
+
+After confirming that the target is a non-worker support pane:
 
 ```bash
-herdr tab create --workspace 1
+herdr pane read w1:p2 --source recent --lines 50
 ```
 
-without `--label`, the new tab keeps the default numbered tab name.
+- `--source visible` reads the current viewport.
+- `--source recent` reads rendered recent scrollback.
+- `--source recent-unwrapped` joins soft-wrapped recent terminal text.
+- `--format ansi` preserves terminal styling when visual state matters.
 
-create and name it in one step:
+## Split a support pane and run a process
 
-```bash
-herdr tab create --workspace 1 --label "logs"
-```
-
-rename it:
-
-```bash
-herdr tab rename 1:2 "logs"
-```
-
-focus it:
+Parse the new pane ID from the split response:
 
 ```bash
-herdr tab focus 1:2
-```
-
-close it:
-
-```bash
-herdr tab close 1:2
-```
-
-## read another pane
-
-see what is on another pane's screen:
-
-```bash
-herdr pane read 1-1 --source recent --lines 50
-```
-
-- `--source visible` = current viewport
-- `--source recent` = recent scrollback as rendered in the pane
-- `--source recent-unwrapped` = recent terminal text with soft wraps joined back together
-
-## split a pane and run a command
-
-split your pane to the right and keep focus on your current pane:
-
-```bash
-herdr pane split 1-2 --direction right --no-focus
-```
-
-that prints json with the new pane nested at `result.pane.pane_id`. parse that value, then run a command in that pane:
-
-```bash
-NEW_PANE=$(herdr pane split 1-2 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+NEW_PANE=$(herdr pane split w1:p1 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
 herdr pane run "$NEW_PANE" "npm run dev"
 ```
 
-split downward instead:
+Split downward when that better fits the layout:
 
 ```bash
-herdr pane split 1-2 --direction down --no-focus
+herdr pane split w1:p1 --direction down --no-focus
 ```
 
-## wait for output
+## Wait for process output
 
-block until specific text appears in a pane. useful for waiting on servers, builds, and tests.
-
-for `--source recent`, matching uses unwrapped recent terminal text, so pane width and soft wrapping do not break matches. `pane read --source recent` still shows the pane as rendered. if you want to inspect the same transcript that the waiter matches, use `pane read --source recent-unwrapped`.
+Use output waits only for process conditions such as server readiness or a test run ending:
 
 ```bash
-herdr wait output 1-3 --match "ready on port 3000" --timeout 30000
+herdr wait output w1:p2 --match "ready on port 3000" --timeout 30000
+herdr wait output w1:p2 --match "server.*ready" --regex --timeout 30000
 ```
 
-with regex:
+Exit code `1` means the wait timed out. Report the timeout, then inspect recent output before deciding what happened.
+
+## Send input to a support shell
+
+After re-reading the live layout and confirming the target is a non-worker support shell:
 
 ```bash
-herdr wait output 1-3 --match "server.*ready" --regex --timeout 30000
+herdr pane send-text w1:p2 "echo hello"
+herdr pane send-keys w1:p2 Enter
+herdr pane run w1:p2 "echo hello"
 ```
 
-if it times out, exit code is `1`.
+`pane run` sends text followed by Enter in one request.
 
-## wait for an agent status
-
-block until another agent reaches a specific status:
+## Manage workspaces
 
 ```bash
-herdr wait agent-status 1-1 --status done --timeout 60000
+herdr workspace create --cwd /path/to/project --no-focus
+herdr workspace create --cwd /path/to/project --label "api server" --no-focus
+herdr workspace focus w2
+herdr workspace rename w1 "api server"
+herdr workspace close w2
 ```
 
-never use this to coordinate with a worker you spawned — that is the polling the delegation doctrine prohibits; worker completion arrives by mail while you are idle. it is a fallback for panes without mail support only.
+Re-read the workspace list immediately before focus or close.
 
-## send text or keys to a pane
+## Close a support pane
 
-send text without pressing Enter:
+After re-reading the live layout and confirming the target is a non-worker support pane:
 
 ```bash
-herdr pane send-text 1-1 "hello from claude"
+herdr pane close w1:p2
 ```
 
-press Enter or other keys:
+## Recipes
+
+Run a server and wait until it is ready:
 
 ```bash
-herdr pane send-keys 1-1 Enter
-```
-
-`pane run` sends the text and then a real `Enter` key in one request:
-
-```bash
-herdr pane run 1-1 "echo hello"
-```
-
-## workspace management
-
-create a new workspace:
-
-```bash
-herdr workspace create --cwd /path/to/project
-```
-
-without `--label`, the new workspace keeps the default cwd-based name.
-
-create and name one in one step:
-
-```bash
-herdr workspace create --cwd /path/to/project --label "api server"
-```
-
-create one without focusing it:
-
-```bash
-herdr workspace create --no-focus
-```
-
-focus a workspace:
-
-```bash
-herdr workspace focus 2
-```
-
-rename:
-
-```bash
-herdr workspace rename 1 "api server"
-```
-
-close:
-
-```bash
-herdr workspace close 2
-```
-
-## close a pane
-
-```bash
-herdr pane close 1-3
-```
-
-## delegate to another agent (mail)
-
-spawn a worker with its task as argv — never launch a bare agent and then
-type the prompt in a second step. launch-then-type is racy: it is easy to
-forget the Enter keypress, or to send the prompt before the agent has
-finished booting and lose it to a boot race. `herdr agent start` takes the
-full command, prompt included, after `--`, so the spawn is one atomic
-operation, and it stamps the new pane's parent context for you (its
-`HERDR_PARENT_TERMINAL_ID` is set without an explicit `--parent-pane`).
-
-```bash
-# claude worker
-NEW=$(herdr agent start claude --cwd . --split right --no-focus -- \
-  claude "research kubernetes operator patterns — when done your final message is mailed to me automatically" \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["terminal_id"])')
-
-# codex worker: always launch it in ~/vault — that cwd's folder permissions
-# are what make bypassing approvals/sandbox safe. pick model/effort with
-# -m and -c model_reasoning_effort= (codex has no literal --yolo flag; this
-# is the flag combination its own TUI labels "YOLO mode").
-herdr agent start codex --cwd /home/joebutler/vault --split right --no-focus -- \
-  codex --dangerously-bypass-approvals-and-sandbox -m <model> \
-  -c model_reasoning_effort=<minimal|low|medium|high> "task"
-
-# opencode worker: the prompt-as-argv subcommand is `run`, not the bare
-# `opencode <project>` form
-herdr agent start opencode --cwd . --split right --no-focus -- \
-  opencode run "task" -m <provider/model>
-```
-
-mail is the preferred way to get the result back, because it avoids
-token-expensive polling. mail always lands in the **recipient's** inbox —
-when a worker sends to `parent`, the message is stored in the orchestrator's
-own inbox, not the worker's. so the orchestrator always waits/reads/lists
-its **own** inbox (the default, taken from `HERDR_PANE_ID` — no `--inbox`
-flag needed) and uses `--from <sender>` only to filter which sender's mail
-it is willing to match. this matters with more than one worker in flight:
-without `--from`, `mail wait` returns the oldest unread mail from ANY
-sender, so a wait aimed at one worker can be satisfied by a different
-worker's unrelated message. `--from` matches the sender's terminal
-identity, not a display string — pass a pane id or terminal id for
-reliability; an agent-name filter (e.g. `--from codex`) only resolves
-correctly while that agent label is unambiguous (one live pane wearing
-it), so switch to pane/terminal id once more than one worker shares an
-agent name.
-
-THE method, correct for every agent on every harness: just end your turn
-right after dispatch. herdr wakes a waiting orchestrator by typing a
-`[herdr mail]` notice into its pane the moment the worker's mail arrives —
-mail sent while you are still mid-turn queues and is delivered the instant
-you go idle. there is nothing to wait for and nothing to poll. rationale in
-one line: a foreground wait blocks your whole turn and burns its duration
-for nothing the nudge doesn't already give you.
-
-the ONLY exception: if your harness can run a shell command in the
-background and notify you when it exits (claude code can; codex and
-opencode cannot), you MAY background the wait instead and keep working
-until it fires:
-
-```bash
-# claude-code-only: background the wait
-herdr mail wait --timeout 120000 --from "$NEW" &
-```
-
-hard prohibitions, no exceptions: never run `mail wait` in the foreground —
-it blocks your turn for the full timeout. never treat `--timeout` as a
-polling interval to re-issue waits against. never re-issue waits in a loop,
-and never poll `pane read`/`wait agent-status` to check on a worker instead
-— all of these defeat the point of mail. if you find yourself picking a
-`--timeout` value for coordination, you are doing it wrong — end your turn
-instead. when you need the result, read just the envelope first (`mail
-read` has no sender filter — it looks up an exact id in your own inbox by
-default), then the body only if it is worth the token cost:
-
-```bash
-ENVELOPE=$(herdr mail read <id>)
-herdr mail read <id> | jq .body
-```
-
-`mail wait` does not mark mail read — always follow it with `herdr mail
-read <id>` for whatever woke you, or pass `--consume` on the wait itself.
-
-to message a worker that is still RUNNING (not at launch), use the typed
-channel instead: `herdr pane run <pane> "message"`. argv-as-prompt only
-works at spawn time. that channel is for the orchestrator to reach a
-worker only — a worker must never `pane run`/`pane send-text` into its
-parent's pane (or any other pane) to reply or coordinate: that types the
-message in as fake user input to whatever is running there, it is not a
-mail delivery. a worker replies by mail, to the pane id shown in the
-envelope it was nudged with.
-
-worker sends a reply by calling `herdr mail send parent --kind done --subject "..." --body-stdin` (resolve `parent` in the CLI from `HERDR_PARENT_TERMINAL_ID` or `HERDR_PARENT_PANE_ID`; the server has no notion of "parent"). for an interim question or status while still working, send `--kind question|info` instead and then end the turn — the reply wakes the worker the same way completion wakes the orchestrator.
-
-with the claude/codex/opencode integrations installed, delegated workers
-(panes spawned with a parent context) automatically send `done` mail when
-their turn finishes and `blocked` mail when awaiting permission — a worker
-does not need to send its own `done` mail, ending the turn is enough. this
-fires at the end of EVERY turn, including a turn where the worker only
-asked a question or reported a block, so an orchestrator should expect an
-interim `done` mail that is not the real completion; judge completion by
-the mail's content, not just its `done` kind — the real completion mail
-arrives only after the orchestrator replies and the worker finishes its
-next turn. standalone panes (no parent) never send automatic mail. `herdr
-integration install` embeds this delegation doctrine in the
-claude/codex/opencode integration and injects it only into sessions
-running inside Herdr, so a worker already knows these rules without being
-told them in its task prompt and ordinary sessions carry no Herdr context.
-
-once you have read a worker's final done-mail and integrated/verified its
-work, close its pane: `herdr pane close <pane_id>`. skip this only if you
-are about to reuse that same worker for follow-up work. finished panes left
-open accumulate, confuse later pane targeting, and keep sessions resident.
-
-## recipes
-
-### run a server and wait until it is ready
-
-```bash
-NEW_PANE=$(herdr pane split 1-2 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+NEW_PANE=$(herdr pane split w1:p1 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
 herdr pane run "$NEW_PANE" "npm run dev"
 herdr wait output "$NEW_PANE" --match "ready" --timeout 30000
 herdr pane read "$NEW_PANE" --source recent --lines 20
 ```
 
-### run tests in a separate pane and inspect the result
+Run tests in a support pane and inspect the result:
 
 ```bash
-herdr pane split 1-2 --direction down --no-focus
-herdr pane run 1-3 "cargo test"
-herdr wait output 1-3 --match "test result" --timeout 60000
-herdr pane read 1-3 --source recent --lines 30
+NEW_PANE=$(herdr pane split w1:p1 --direction down --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+herdr pane run "$NEW_PANE" "cargo test"
+herdr wait output "$NEW_PANE" --match "test result" --timeout 60000
+herdr pane read "$NEW_PANE" --source recent --lines 30
 ```
 
-### check what another agent is working on
+## CLI output notes
 
-```bash
-herdr pane list
-herdr pane read 1-1 --source recent --lines 80
-```
-
-### watch another pane robustly
-
-use this pattern when you need to coordinate with a sibling pane:
-
-```bash
-# inspect what is already there
-herdr pane read 1-3 --source recent --lines 40
-
-# wait only for the next output you expect
-herdr wait output 1-3 --match "ready" --timeout 30000
-
-# if you need to inspect the same transcript the waiter matched,
-# read the unwrapped recent text directly
-herdr pane read 1-3 --source recent-unwrapped --lines 40
-```
-
-### spawn a new agent and give it a task
-
-```bash
-NEW=$(herdr agent start claude --cwd . --split right --no-focus -- \
-  claude "review the test coverage in src/api/ — when done your final message is mailed to me automatically" \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["terminal_id"])')
-
-# THE method, correct on every harness: just end your turn here. herdr
-# types a [herdr mail] notice into your pane the moment $NEW's mail
-# arrives — nothing to wait for, nothing to poll.
-
-# claude-code-only exception: if your harness notifies you on
-# background-task completion, you may background the wait instead:
-herdr mail wait --timeout 120000 --from "$NEW" &
-```
-
-the prompt is argv, not typed in after boot — one atomic spawn, no race on
-the Enter key or the agent's boot time. `--from "$NEW"` filters to that
-sender so a different in-flight worker's mail can't satisfy this wait, and
-the wait runs against your own default inbox since no `--inbox` is given.
-never run `mail wait` in the foreground — it blocks your whole turn for the
-timeout and burns it for nothing the mail-arrival nudge doesn't already
-give you; ending your turn is the correct default for codex, opencode, and
-claude code alike. once you have read the result and integrated it, close
-the worker's pane (`herdr pane close <pane_id>`) unless you are about to
-reuse it for follow-up work.
-
-### coordinate with another agent
-
-prefer the mail loop (above) to avoid polling. if you must check an agent's status screen-based, use `wait agent-status` as a fallback for panes without mail support, but note that `done` only reliably occurs when the pane is not being viewed; `idle` is the more stable completion signal when you are watching the pane in the active tab.
-
-```bash
-herdr wait agent-status 1-1 --status idle --timeout 120000
-herdr pane read 1-1 --source recent --lines 100
-```
-
-## notes
-
-- `workspace list`, `workspace create`, `tab list`, `tab create`, `tab get`, `tab focus`, `tab rename`, `tab close`, `pane list`, `pane get`, `pane split`, `wait output`, `wait agent-status`, `mail send`, `mail wait`, `mail read`, and `mail list` print json on success.
-- for `mail wait`/`mail list`/`mail read`, `--inbox` selects whose inbox to act on (default: your own pane, from `HERDR_PANE_ID`); `mail wait`/`mail list` additionally take `--from <sender>` to filter to one sender's mail (a pane id, agent name, or terminal id) — `--from` never changes whose inbox is read, it only narrows which messages in that inbox count.
-- `pane read` prints text, not json.
-- `pane read --format ansi` or `pane read --ansi` returns a rendered ANSI snapshot for TUI feedback loops.
-- `pane read --source recent-unwrapped` is useful when you want to inspect the same unwrapped transcript that `wait output --source recent` matches against.
-- `pane send-text`, `pane send-keys`, and `pane run` print nothing on success.
-- parse ids from `workspace create`, `tab create`, and `pane split` responses when you need new ids. `workspace create` returns `result.workspace`, `result.tab`, and `result.root_pane`. `tab create` returns `result.tab` and `result.root_pane`. for `pane split`, the new pane id is at `result.pane.pane_id`.
-- use `pane read` for current output that already exists. use `wait output` for future output you expect next.
-- `--no-focus` on split, tab create, and workspace create keeps your current terminal context focused.
-- without `--label`, workspace create keeps cwd-based naming and tab create keeps numbered naming.
-- `--label` on tab create and workspace create applies the custom name immediately.
-- if you are running inside herdr, the `HERDR_ENV` environment variable is set to `1`.
+- Workspace, tab, pane-list, pane-get, pane-split, and output-wait commands print JSON on success.
+- `pane read` prints text.
+- Pane send and run commands print nothing on success.
+- Create and split responses contain the new IDs; parse them rather than predicting them.
+- Use `pane read` for output that already exists and `wait output` for output expected next.
+- `--no-focus` on split, tab-create, and workspace-create preserves the current terminal context.

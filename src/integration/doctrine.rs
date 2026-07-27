@@ -8,9 +8,8 @@
 // sessions outside herdr never carry it.
 pub(crate) const DELEGATION_DOCTRINE: &str = r#"## herdr delegation doctrine
 
-this section applies only inside a herdr-managed pane: `HERDR_ENV=1` or
-`HERDR_PARENT_TERMINAL_ID` set in your environment. outside herdr, ignore
-this entire section.
+this section is injected only inside a herdr-managed pane where
+`HERDR_ENV=1`. outside herdr, integrations must not expose it.
 
 this doctrine is complete for spawning workers, worker mail, and closing
 worker panes — do not load the herdr skill for those. load the skill only
@@ -32,20 +31,13 @@ spawned by one.
 - a worker prompt is a self-contained brief: name the exact files or
   paths, the done criteria, and how the worker should verify its work.
   never reference your own conversation — the worker cannot see it.
-- codex model routing: `gpt-5.6-terra` is the default — most work goes
-  there. `gpt-5.6-luna` is fast and affordable yet intelligent — use it
-  for well-defined, high-volume work. `gpt-5.6-sol` is the most
-  intelligent — reserve it for adversarial review, second opinions, and
-  tricky debugging.
 - spawn workers with the prompt as argv — one atomic command, never
   launch-then-type. typing a prompt into a pane after boot is racy: you can
   forget the Enter key, or hit a boot race where the agent is not ready yet.
 - claude worker:
   `herdr agent start claude-<task> --cwd <dir> --split right --no-focus -- claude "task text — when done your final message is mailed to me automatically"`
-- codex worker: always launch with `--cwd /home/joebutler/vault` — the
-  vault's folder permissions are what make bypassing approvals/sandbox safe.
-  pick model/effort with `-m` and `-c model_reasoning_effort=`:
-  `herdr agent start codex-<task> --cwd /home/joebutler/vault --split right --no-focus -- codex --dangerously-bypass-approvals-and-sandbox -m <model> -c model_reasoning_effort=<minimal|low|medium|high> "task"`
+- codex worker:
+  `herdr agent start codex-<task> --cwd <dir> --split right --no-focus -- codex "task"`
 - opencode worker: the prompt-as-argv subcommand is `run`, not the bare
   `opencode <project>` form:
   `herdr agent start opencode-<task> --cwd <dir> --split right --no-focus -- opencode run "task" -m <provider/model>`
@@ -79,9 +71,6 @@ spawned by one.
   than one live pane, filter by pane/terminal id instead.
 - to send a follow-up to a worker that is still RUNNING, use the typed
   channel: `herdr pane run <pane> "message"`. argv only works at launch.
-- more than one worker in flight: either issue one `mail wait --from
-  <worker>` per worker you care about, or do an unfiltered wait and read
-  whatever arrives.
 - `mail wait` does not mark mail read. always `herdr mail read <id>` for
   whatever woke you, or pass `--consume` on the wait itself.
 - once you have read a worker's final done-mail and integrated/verified its

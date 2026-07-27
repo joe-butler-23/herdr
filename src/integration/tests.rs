@@ -151,6 +151,144 @@ fn unique_base() -> PathBuf {
     ))
 }
 
+#[test]
+fn public_skill_excludes_worker_coordination_doctrine() {
+    let skill = include_str!("../../SKILL.md");
+    let forbidden = [
+        "herdr agent start",
+        "herdr mail ",
+        "mail wait",
+        "mail read",
+        "mail send",
+        "wait agent-status",
+        "agent_status",
+        "spawn a new agent",
+        "check what another agent",
+        "close its pane",
+    ];
+
+    for phrase in forbidden {
+        assert!(
+            !skill.contains(phrase),
+            "public operator skill must not duplicate worker doctrine: {phrase}"
+        );
+    }
+    assert_eq!(
+        skill.matches("Herdr-injected session context").count(),
+        1,
+        "public operator skill must contain exactly one pointer to injected worker context"
+    );
+    assert!(skill.contains("confirmed non-worker support pane"));
+    assert!(skill.contains("Do not use them to coordinate with an agent."));
+}
+
+#[test]
+fn delegation_doctrine_stays_portable_and_uses_filtered_waits() {
+    assert!(!DELEGATION_DOCTRINE.contains("/home/"));
+    assert!(!DELEGATION_DOCTRINE.contains("dangerously-bypass"));
+    assert!(!DELEGATION_DOCTRINE.contains("unfiltered wait"));
+    assert!(!DELEGATION_DOCTRINE.contains("wait and read whatever arrives"));
+    assert!(DELEGATION_DOCTRINE.contains("wait --from <worker> --timeout <ms>"));
+}
+
+#[cfg(unix)]
+fn assert_session_hook_injects_doctrine_only_inside_herdr(asset: &str, name: &str) {
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipping {name} hook runtime test because python3 is unavailable");
+        return;
+    }
+
+    let base = unique_base();
+    fs::create_dir_all(&base).unwrap();
+    let hook_path = base.join(format!("{name}-hook.sh"));
+    fs::write(&hook_path, render_hook_asset(asset)).unwrap();
+
+    let run_hook = |inside_herdr: bool| {
+        let mut command = Command::new("sh");
+        command
+            .arg(&hook_path)
+            .arg("session")
+            .env_remove("HERDR_ENV")
+            .env_remove("HERDR_SOCKET_PATH")
+            .env_remove("HERDR_PANE_ID")
+            .env_remove("HERDR_PARENT_TERMINAL_ID")
+            .env_remove("HERDR_PARENT_PANE_ID");
+        if inside_herdr {
+            command
+                .env("HERDR_ENV", "1")
+                .env("HERDR_SOCKET_PATH", base.join("missing.sock"))
+                .env("HERDR_PANE_ID", "w1:p1");
+        }
+        command.output().unwrap()
+    };
+
+    let outside = run_hook(false);
+    assert!(
+        outside.status.success(),
+        "outside-Herdr {name} hook failed: {}",
+        String::from_utf8_lossy(&outside.stderr)
+    );
+    assert!(
+        outside.stdout.is_empty(),
+        "outside-Herdr {name} hook exposed session context"
+    );
+
+    let inside = run_hook(true);
+    assert!(
+        inside.status.success(),
+        "inside-Herdr {name} hook failed: {}",
+        String::from_utf8_lossy(&inside.stderr)
+    );
+    let output = String::from_utf8(inside.stdout).unwrap();
+    assert_eq!(output, format!("{}\n", DELEGATION_DOCTRINE.trim_end()));
+    assert_eq!(output.matches(DELEGATION_DOCTRINE.trim_end()).count(), 1);
+
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(unix)]
+#[test]
+fn rendered_claude_hook_injects_doctrine_once_only_inside_herdr() {
+    let _lock = integration_env_lock();
+    assert_session_hook_injects_doctrine_only_inside_herdr(CLAUDE_HOOK_ASSET, "claude");
+}
+
+#[cfg(unix)]
+#[test]
+fn rendered_codex_hook_injects_doctrine_once_only_inside_herdr() {
+    let _lock = integration_env_lock();
+    assert_session_hook_injects_doctrine_only_inside_herdr(CODEX_HOOK_ASSET, "codex");
+}
+
+#[test]
+fn powershell_session_hooks_gate_and_embed_doctrine_once() {
+    let assets = [
+        (
+            "claude",
+            include_str!("assets/claude/herdr-agent-state.ps1"),
+        ),
+        ("codex", include_str!("assets/codex/herdr-agent-state.ps1")),
+    ];
+
+    for (name, asset) in assets {
+        let gate = asset
+            .find(r#"if ($env:HERDR_ENV -ne "1") { exit 0 }"#)
+            .unwrap_or_else(|| panic!("{name} PowerShell hook is missing the HERDR_ENV gate"));
+        let placeholder = asset
+            .find("__HERDR_DELEGATION_DOCTRINE__")
+            .unwrap_or_else(|| panic!("{name} PowerShell hook is missing the doctrine"));
+        assert!(
+            gate < placeholder,
+            "{name} PowerShell hook must gate the doctrine before exposing it"
+        );
+        assert_eq!(asset.matches("__HERDR_DELEGATION_DOCTRINE__").count(), 1);
+
+        let rendered = render_hook_asset(asset);
+        assert!(!rendered.contains("__HERDR_DELEGATION_DOCTRINE__"));
+        assert_eq!(rendered.matches(DELEGATION_DOCTRINE.trim_end()).count(), 1);
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn home_dir_uses_userprofile_when_home_is_missing() {

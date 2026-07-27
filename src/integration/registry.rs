@@ -238,7 +238,7 @@ pub(crate) fn integration_status(
         )));
     };
 
-    Ok(integration_status_at(target, path?, expected_version))
+    integration_status_checked_at(target, path?, expected_version)
 }
 
 pub(crate) fn integration_recommendations() -> Vec<super::IntegrationRecommendation> {
@@ -422,22 +422,96 @@ pub(crate) fn integration_status_at(
     }
 }
 
+fn integration_status_checked_at(
+    target: crate::api::schema::IntegrationTarget,
+    path: PathBuf,
+    expected_version: u32,
+) -> io::Result<super::IntegrationStatus> {
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Ok(super::IntegrationStatus {
+                target,
+                path,
+                state: super::IntegrationStatusKind::NotInstalled,
+                installed_version: None,
+                expected_version,
+            });
+        }
+        Err(err) => {
+            return Err(io::Error::new(
+                err.kind(),
+                format!(
+                    "failed to inspect {} integration at {}: {err}",
+                    integration_target_label(target),
+                    path.display()
+                ),
+            ));
+        }
+    };
+    if !metadata.is_file() {
+        return Err(io::Error::other(format!(
+            "{} integration path is not a regular file: {}",
+            integration_target_label(target),
+            path.display()
+        )));
+    }
+
+    let content = fs::read_to_string(&path).map_err(|err| {
+        io::Error::new(
+            err.kind(),
+            format!(
+                "failed to read {} integration at {}: {err}",
+                integration_target_label(target),
+                path.display()
+            ),
+        )
+    })?;
+    let installed_version = parse_integration_version(&content);
+    let is_current = match target {
+        crate::api::schema::IntegrationTarget::Opencode => {
+            opencode_installation_is_current_checked(&path, &content)?
+        }
+        _ => installed_version.is_some_and(|version| version >= expected_version),
+    };
+
+    Ok(super::IntegrationStatus {
+        target,
+        path,
+        state: if is_current {
+            super::IntegrationStatusKind::Current
+        } else {
+            super::IntegrationStatusKind::Outdated
+        },
+        installed_version,
+        expected_version,
+    })
+}
+
 fn opencode_installation_is_current(plugin_path: &Path, content: &str) -> bool {
+    opencode_installation_is_current_checked(plugin_path, content).unwrap_or(false)
+}
+
+fn opencode_installation_is_current_checked(plugin_path: &Path, content: &str) -> io::Result<bool> {
     if content != super::render_opencode_plugin_asset(super::OPENCODE_PLUGIN_ASSET) {
-        return false;
+        return Ok(false);
     }
 
     let Some(config_dir) = plugin_path.parent().and_then(Path::parent) else {
-        return false;
+        return Ok(false);
     };
     let doctrine_path = config_dir.join("AGENTS.md");
     match fs::read_to_string(doctrine_path) {
-        Ok(doctrine) => {
-            !doctrine.contains(super::DOCTRINE_BLOCK_BEGIN)
-                && !doctrine.contains(super::DOCTRINE_BLOCK_END)
-        }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
-        Err(_) => false,
+        Ok(doctrine) => Ok(!doctrine.contains(super::DOCTRINE_BLOCK_BEGIN)
+            && !doctrine.contains(super::DOCTRINE_BLOCK_END)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(err) => Err(io::Error::new(
+            err.kind(),
+            format!(
+                "failed to read legacy OpenCode instructions at {}: {err}",
+                config_dir.join("AGENTS.md").display()
+            ),
+        )),
     }
 }
 

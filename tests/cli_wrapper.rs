@@ -1579,6 +1579,45 @@ fn opencode_integration_check_gates_exact_plugin_and_legacy_doctrine_cleanup() {
 }
 
 #[test]
+fn integration_check_operational_failure_is_not_repairable_drift() {
+    let output = Command::new(env!("CARGO_BIN_EXE_herdr"))
+        .args(["integration", "check", "claude"])
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env_remove("HOMEDRIVE")
+        .env_remove("HOMEPATH")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("home directory is not set; cannot locate home directory"));
+}
+
+#[test]
+fn integration_check_invalid_install_shape_is_not_repairable_drift() {
+    let base = unique_test_dir();
+    let home_dir = base.join("home");
+    let plugin_path = home_dir
+        .join(".config/opencode/plugins")
+        .join("herdr-agent-state.js");
+    fs::create_dir_all(&plugin_path).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_herdr"))
+        .args(["integration", "check", "opencode"])
+        .env("HOME", &home_dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("opencode integration path is not a regular file"));
+
+    cleanup_test_base(&base);
+}
+
+#[test]
 fn integration_status_outdated_only_prints_action_for_legacy_install() {
     let base = unique_test_dir();
     let home_dir = base.join("home");
