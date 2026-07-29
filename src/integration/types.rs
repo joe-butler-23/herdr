@@ -4,7 +4,6 @@ use std::path::PathBuf;
 pub(crate) struct ClaudeInstallPaths {
     pub hook_path: PathBuf,
     pub settings_path: PathBuf,
-    pub doctrine_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -12,7 +11,6 @@ pub(crate) struct CodexInstallPaths {
     pub hook_path: PathBuf,
     pub hooks_path: PathBuf,
     pub config_path: PathBuf,
-    pub doctrine_path: PathBuf,
 }
 
 #[derive(Debug)]

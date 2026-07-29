@@ -2,7 +2,7 @@
 
 You are reading this because a human asked you to help them understand, set up, or troubleshoot Herdr. This file gives you the concept model, the setup path, and the diagnosis recipes so you can guide them accurately. Canonical documentation lives at https://herdr.dev/docs/ — link the human there for depth, and verify any command you are unsure about against those pages instead of guessing.
 
-If you are running *inside* a Herdr pane (the environment variable `HERDR_ENV=1` is set), Herdr also ships a skill file that teaches you to control Herdr yourself through the `herdr` CLI: https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md. That file is about you operating Herdr; this file is about you teaching a human.
+When a supported coding-agent integration runs inside a Herdr pane (`HERDR_ENV=1`), Herdr injects its session doctrine automatically. That context governs the agent's own delegation, mail coordination, and safe live-session control. This guide is for helping a human understand or troubleshoot Herdr.
 
 ## What Herdr is
 
@@ -43,7 +43,7 @@ Homebrew, mise, and Nix installs, verification, and manual downloads: https://he
 
 ## First-run walkthrough
 
-First check where you are. If `HERDR_ENV=1` is set in your environment, you are already running inside a Herdr pane — the human is already attached, so skip step 1 entirely and never tell them to run `herdr` from your pane. Herdr blocks nested launches by design. Start from step 2, and consider the skill file below.
+First check where you are. If `HERDR_ENV=1` is set in your environment, you are already running inside a Herdr pane — the human is already attached, so skip step 1 entirely and never tell them to run `herdr` from your pane. Herdr blocks nested launches by design. Start from step 2.
 
 Walk the human through this sequence:
 
@@ -63,11 +63,17 @@ Important framing for new users: Herdr does not require learning keybindings. Th
 - Every binding, including the prefix itself, is configurable under `[keys]` in the config file.
 - If a direct chord does nothing, the OS or the outer terminal consumed it before Herdr could see it. The keyboard page explains which chords are safe and why.
 
-## Install the Herdr skill into yourself
+## Install the coding-agent integration
 
-Herdr ships `SKILL.md` (https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md), an instruction file that teaches a coding agent to control Herdr from inside a pane — splitting panes, running commands without stealing focus, reading output, waiting on other agents.
+Install the integration matching the coding agent the human runs inside Herdr:
 
-Once the human is set up, offer to install it into your own harness so future sessions know Herdr natively. For agents supported by the open skills CLI, use `npx skills add ogulcancelik/herdr --skill herdr -g`. Agents without a skill system can paste the GitHub copy above into global custom instructions. Ask the human before writing to their config locations, and use the GitHub copy above as the source of truth.
+```bash
+herdr integration install claude
+herdr integration install codex
+herdr integration install opencode
+```
+
+The Claude Code and Codex hooks inject the session doctrine at session start. The OpenCode plugin injects it through the system-transform hook. All three gate delivery on `HERDR_ENV=1`. Verify the installed files and registrations with `herdr integration check <provider>`.
 
 ## Configuration
 

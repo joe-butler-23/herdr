@@ -170,13 +170,15 @@ not a gui window, not a web dashboard, not electron. herdr runs inside whatever 
 
 ## agents can use herdr too
 
-The local Unix socket lets agents create workspaces, split or zoom panes, spawn helpers, read output, and wait for state changes. Install the reusable skill with:
+The local Unix socket lets agents create workspaces, split or zoom panes, spawn helpers, read output, and wait for state changes. The official Claude Code, Codex, and OpenCode integrations also inject the session doctrine agents need for delegation, mail coordination, and safe pane control:
 
 ```bash
-npx skills add ogulcancelik/herdr --skill herdr -g
+herdr integration install claude
+herdr integration install codex
+herdr integration install opencode
 ```
 
-Start with the [agent skill docs](https://herdr.dev/docs/agent-skill/), [socket API docs](https://herdr.dev/docs/socket-api/), and [`SKILL.md`](./SKILL.md).
+Start with the [agent session context](https://herdr.dev/docs/agent-session/) and [socket API docs](https://herdr.dev/docs/socket-api/).
 
 ## supported agents
 
@@ -270,7 +272,7 @@ In-app settings cover theme, sound, and toast preferences. Herdr writes logs und
 - [session state](https://herdr.dev/docs/session-state/) — detach, restart restore, agent restore, and live handoff
 - [configuration](https://herdr.dev/docs/configuration/) — keybindings, themes, notifications, environment variables
 - [integrations](https://herdr.dev/docs/integrations/) — pi, omp, claude code, codex, cursor agent cli, github copilot cli, droid, kimi code cli, opencode, kilo code cli, hermes, qodercli integrations
-- [`SKILL.md`](./SKILL.md) — reusable agent skill
+- [agent session context](https://herdr.dev/docs/agent-session/) — automatic operating context for supported agents inside Herdr
 - [socket api](https://herdr.dev/docs/socket-api/) — socket protocol and cli reference
 
 ## agent instructions

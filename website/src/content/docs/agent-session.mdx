@@ -1,0 +1,45 @@
+---
+title: Agent session context
+description: How Herdr teaches supported coding agents to coordinate and control a live session.
+---
+
+Herdr's official Claude Code, Codex, and OpenCode integrations inject a concise session doctrine into agents running inside Herdr. Delivery is gated by `HERDR_ENV=1`, so ordinary sessions do not receive this context.
+
+## What the doctrine covers
+
+The doctrine gives an agent the context needed to:
+
+- delegate one bounded task to each worker pane
+- coordinate through Herdr mail without polling worker output
+- distinguish genuine completion from interim questions or blockers
+- reply to workers and close completed worker panes
+- identify its own pane without relying on UI focus
+- safely manage confirmed support panes, tabs, workspaces, servers, logs, and output waits
+
+Exact command syntax remains owned by live `herdr <group> --help` output. The doctrine carries only the operating rules whose absence could cause races, misdirected input, stale-ID mistakes, or wasted waiting.
+
+## Install the provider integration
+
+Install the integration for the agent you run inside Herdr:
+
+```bash
+herdr integration install claude
+herdr integration install codex
+herdr integration install opencode
+```
+
+Check that the installed projection exactly matches the current Herdr build:
+
+```bash
+herdr integration check claude
+herdr integration check codex
+herdr integration check opencode
+```
+
+The Claude Code and Codex integrations deliver the doctrine through session-start hooks. The OpenCode plugin appends it through the system-transform hook. All three gate delivery on `HERDR_ENV=1`.
+
+## Source and updates
+
+`src/integration/session_doctrine.rs` is the sole prose authority. Provider assets contain delivery mechanics and a generated placeholder rather than independent copies.
+
+Updating Herdr does not rewrite an already installed provider integration automatically. Re-run `herdr integration install <provider>` when `herdr integration check <provider>` reports that it is outdated.

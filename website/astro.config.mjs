@@ -13,8 +13,6 @@ function rewriteHerdrLinks() {
     ['./INTEGRATIONS.md', '/docs/integrations/'],
     ['SOCKET_API.md', '/docs/socket-api/'],
     ['./SOCKET_API.md', '/docs/socket-api/'],
-    ['SKILL.md', '/docs/agent-skill/'],
-    ['./SKILL.md', '/docs/agent-skill/'],
   ]);
 
   return function transform(tree) {
@@ -132,7 +130,7 @@ export default defineConfig({
             { label: 'CLI reference', slug: 'docs/cli-reference' },
             { label: 'Socket API', slug: 'docs/socket-api' },
             { label: 'Integrations', slug: 'docs/integrations' },
-            { label: 'Agent skill file', slug: 'docs/agent-skill' },
+            { label: 'Agent session context', slug: 'docs/agent-session' },
             { label: 'Windows beta', slug: 'docs/windows-beta' },
           ],
         },

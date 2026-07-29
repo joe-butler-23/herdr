@@ -8,7 +8,7 @@ import net from "node:net";
 
 const SOURCE = "herdr:opencode";
 const AGENT = "opencode";
-const DELEGATION_DOCTRINE = __HERDR_DELEGATION_DOCTRINE_JAVASCRIPT__;
+const SESSION_DOCTRINE = __HERDR_SESSION_DOCTRINE_JAVASCRIPT__;
 let reportSeq = Date.now() * 1000;
 
 // Subagent (task tool) sessions carry a parentID; the main agent session does
@@ -196,8 +196,8 @@ export const HerdrAgentStatePlugin = async ({ client } = {}) => {
       if (!Array.isArray(output?.system)) {
         return;
       }
-      if (!output.system.includes(DELEGATION_DOCTRINE)) {
-        output.system.push(DELEGATION_DOCTRINE);
+      if (!output.system.includes(SESSION_DOCTRINE)) {
+        output.system.push(SESSION_DOCTRINE);
       }
     },
   };

@@ -85,6 +85,6 @@ try {
 
 if ($Action -eq "session") {
 @'
-__HERDR_DELEGATION_DOCTRINE__
+__HERDR_SESSION_DOCTRINE__
 '@
 }

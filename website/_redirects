@@ -1,4 +1,5 @@
 /install /install.sh 200
 /sitemap.xml /sitemap-index.xml 301
-/docs/skill/ /docs/agent-skill/ 301
+/docs/skill/ /docs/agent-session/ 301
+/docs/agent-skill/ /docs/agent-session/ 301
 /docs/api/ /docs/socket-api/ 301

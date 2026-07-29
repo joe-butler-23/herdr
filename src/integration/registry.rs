@@ -2,6 +2,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
+use super::command::hook_command;
+use super::config_edit::build_codex_config_with_hooks;
 use super::env::*;
 
 pub(crate) fn integration_target_label(
@@ -402,6 +406,12 @@ pub(crate) fn integration_status_at(
     let content = fs::read_to_string(&path).ok();
     let installed_version = content.as_deref().and_then(parse_integration_version);
     let is_current = match target {
+        crate::api::schema::IntegrationTarget::Claude => content
+            .as_deref()
+            .is_some_and(|content| claude_installation_is_current(&path, content)),
+        crate::api::schema::IntegrationTarget::Codex => content
+            .as_deref()
+            .is_some_and(|content| codex_installation_is_current(&path, content)),
         crate::api::schema::IntegrationTarget::Opencode => content
             .as_deref()
             .is_some_and(|content| opencode_installation_is_current(&path, content)),
@@ -469,6 +479,12 @@ fn integration_status_checked_at(
     })?;
     let installed_version = parse_integration_version(&content);
     let is_current = match target {
+        crate::api::schema::IntegrationTarget::Claude => {
+            claude_installation_is_current_checked(&path, &content)?
+        }
+        crate::api::schema::IntegrationTarget::Codex => {
+            codex_installation_is_current_checked(&path, &content)?
+        }
         crate::api::schema::IntegrationTarget::Opencode => {
             opencode_installation_is_current_checked(&path, &content)?
         }
@@ -488,6 +504,169 @@ fn integration_status_checked_at(
     })
 }
 
+#[derive(Clone, Copy)]
+struct CommandHookExpectation<'a> {
+    event: &'a str,
+    action: &'a str,
+    matcher: Option<&'a str>,
+}
+
+fn claude_installation_is_current(hook_path: &Path, content: &str) -> bool {
+    claude_installation_is_current_checked(hook_path, content).unwrap_or(false)
+}
+
+fn claude_installation_is_current_checked(hook_path: &Path, content: &str) -> io::Result<bool> {
+    if content != super::render_hook_asset(super::CLAUDE_HOOK_ASSET) {
+        return Ok(false);
+    }
+
+    let Some(config_dir) = hook_path.parent().and_then(Path::parent) else {
+        return Ok(false);
+    };
+    let expectations = [
+        CommandHookExpectation {
+            event: "SessionStart",
+            action: "session",
+            matcher: Some("*"),
+        },
+        CommandHookExpectation {
+            event: "Stop",
+            action: "mail-done",
+            matcher: Some("*"),
+        },
+        CommandHookExpectation {
+            event: "Notification",
+            action: "mail-blocked",
+            matcher: Some("permission_prompt"),
+        },
+    ];
+
+    Ok(command_hook_registrations_are_current(
+        &config_dir.join("settings.json"),
+        hook_path,
+        &expectations,
+    )? && markdown_doctrine_is_absent(&config_dir.join("CLAUDE.md"))?)
+}
+
+fn codex_installation_is_current(hook_path: &Path, content: &str) -> bool {
+    codex_installation_is_current_checked(hook_path, content).unwrap_or(false)
+}
+
+fn codex_installation_is_current_checked(hook_path: &Path, content: &str) -> io::Result<bool> {
+    if content != super::render_hook_asset(super::CODEX_HOOK_ASSET) {
+        return Ok(false);
+    }
+
+    let Some(config_dir) = hook_path.parent() else {
+        return Ok(false);
+    };
+    let expectations = [
+        CommandHookExpectation {
+            event: "SessionStart",
+            action: "session",
+            matcher: None,
+        },
+        CommandHookExpectation {
+            event: "Stop",
+            action: "mail-done",
+            matcher: None,
+        },
+        CommandHookExpectation {
+            event: "PermissionRequest",
+            action: "mail-blocked",
+            matcher: None,
+        },
+    ];
+
+    Ok(command_hook_registrations_are_current(
+        &config_dir.join("hooks.json"),
+        hook_path,
+        &expectations,
+    )? && codex_hook_feature_is_current(&config_dir.join("config.toml"))?
+        && markdown_doctrine_is_absent(&config_dir.join("AGENTS.md"))?)
+}
+
+fn command_hook_registrations_are_current(
+    config_path: &Path,
+    hook_path: &Path,
+    expectations: &[CommandHookExpectation<'_>],
+) -> io::Result<bool> {
+    let content = match fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    let root: Value = serde_json::from_str(&content).map_err(|err| {
+        io::Error::other(format!(
+            "failed to parse integration hooks at {}: {err}",
+            config_path.display()
+        ))
+    })?;
+    let Some(hooks) = root.get("hooks").and_then(Value::as_object) else {
+        return Ok(false);
+    };
+
+    let hook_path_text = hook_path.display().to_string();
+    let mut matches = vec![0_u8; expectations.len()];
+    for (event, entries) in hooks {
+        let Some(entries) = entries.as_array() else {
+            if expectations
+                .iter()
+                .any(|expectation| expectation.event == event)
+            {
+                return Ok(false);
+            }
+            continue;
+        };
+        for entry in entries {
+            let matcher = entry.get("matcher").and_then(Value::as_str);
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for command in commands {
+                let Some(command_text) = command.get("command").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !command_text.contains(&hook_path_text) {
+                    continue;
+                }
+
+                let Some((index, _)) = expectations.iter().enumerate().find(|(_, expectation)| {
+                    expectation.event == event
+                        && command_text
+                            == hook_command(hook_path, Some(expectation.action)).as_str()
+                        && matcher == expectation.matcher
+                        && command.get("type").and_then(Value::as_str) == Some("command")
+                        && command.get("timeout").and_then(Value::as_u64) == Some(10)
+                }) else {
+                    return Ok(false);
+                };
+                matches[index] = matches[index].saturating_add(1);
+            }
+        }
+    }
+
+    Ok(matches.into_iter().all(|count| count == 1))
+}
+
+fn codex_hook_feature_is_current(config_path: &Path) -> io::Result<bool> {
+    let content = match fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    Ok(build_codex_config_with_hooks(&content) == content)
+}
+
+fn markdown_doctrine_is_absent(path: &Path) -> io::Result<bool> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(!content.contains(super::DOCTRINE_BLOCK_BEGIN)
+            && !content.contains(super::DOCTRINE_BLOCK_END)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(err) => Err(err),
+    }
+}
+
 fn opencode_installation_is_current(plugin_path: &Path, content: &str) -> bool {
     opencode_installation_is_current_checked(plugin_path, content).unwrap_or(false)
 }
@@ -500,19 +679,7 @@ fn opencode_installation_is_current_checked(plugin_path: &Path, content: &str) -
     let Some(config_dir) = plugin_path.parent().and_then(Path::parent) else {
         return Ok(false);
     };
-    let doctrine_path = config_dir.join("AGENTS.md");
-    match fs::read_to_string(doctrine_path) {
-        Ok(doctrine) => Ok(!doctrine.contains(super::DOCTRINE_BLOCK_BEGIN)
-            && !doctrine.contains(super::DOCTRINE_BLOCK_END)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(true),
-        Err(err) => Err(io::Error::new(
-            err.kind(),
-            format!(
-                "failed to read legacy OpenCode instructions at {}: {err}",
-                config_dir.join("AGENTS.md").display()
-            ),
-        )),
-    }
+    markdown_doctrine_is_absent(&config_dir.join("AGENTS.md"))
 }
 
 pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {

@@ -153,6 +153,6 @@ PY
 
 if [ "$action" = "session" ]; then
   cat <<'HERDR_DOCTRINE_EOF'
-__HERDR_DELEGATION_DOCTRINE__
+__HERDR_SESSION_DOCTRINE__
 HERDR_DOCTRINE_EOF
 fi

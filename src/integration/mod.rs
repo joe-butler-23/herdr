@@ -1,18 +1,15 @@
 mod actions;
 mod command;
 mod config_edit;
-mod doctrine;
 mod env;
 mod file_ops;
 mod registry;
+mod session_doctrine;
 mod targets;
 mod types;
 mod version;
 
 pub(crate) use actions::{install_target, uninstall_target};
-#[cfg(test)]
-pub(crate) use doctrine::DELEGATION_DOCTRINE;
-pub(crate) use doctrine::{render_hook_asset, render_opencode_plugin_asset};
 #[cfg(test)]
 pub(crate) use env::integration_env_lock;
 pub(crate) use env::{
@@ -23,6 +20,9 @@ pub(crate) use registry::{
     installed_integration_statuses, integration_recommendations, integration_status,
     integration_target_label, print_outdated_update_notice,
 };
+#[cfg(test)]
+pub(crate) use session_doctrine::SESSION_DOCTRINE;
+pub(crate) use session_doctrine::{render_hook_asset, render_opencode_plugin_asset};
 pub(crate) use types::{IntegrationRecommendation, IntegrationStatus, IntegrationStatusKind};
 
 const PI_EXTENSION_INSTALL_NAME: &str = "herdr-agent-state.ts";

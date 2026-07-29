@@ -187,7 +187,6 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
     Ok(ClaudeInstallPaths {
         hook_path,
         settings_path,
-        doctrine_path,
     })
 }
 
@@ -278,7 +277,6 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
         hook_path,
         hooks_path,
         config_path,
-        doctrine_path,
     })
 }
 

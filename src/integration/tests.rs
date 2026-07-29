@@ -152,43 +152,60 @@ fn unique_base() -> PathBuf {
 }
 
 #[test]
-fn public_skill_excludes_worker_coordination_doctrine() {
-    let skill = include_str!("../../SKILL.md");
-    let forbidden = [
-        "herdr agent start",
-        "herdr mail ",
-        "mail wait",
-        "mail read",
-        "mail send",
-        "wait agent-status",
-        "agent_status",
-        "spawn a new agent",
-        "check what another agent",
-        "close its pane",
-    ];
-
-    for phrase in forbidden {
-        assert!(
-            !skill.contains(phrase),
-            "public operator skill must not duplicate worker doctrine: {phrase}"
+fn runtime_context_is_rendered_from_one_doctrine_into_each_provider_integration() {
+    let hook_assets = [("claude", CLAUDE_HOOK_ASSET), ("codex", CODEX_HOOK_ASSET)];
+    for (name, asset) in hook_assets {
+        assert_eq!(
+            asset.matches("__HERDR_SESSION_DOCTRINE__").count(),
+            1,
+            "{name} hook must contain one doctrine placeholder"
+        );
+        let rendered = render_hook_asset(asset);
+        assert!(!rendered.contains("__HERDR_SESSION_DOCTRINE__"));
+        assert_eq!(
+            rendered.matches(SESSION_DOCTRINE.trim_end()).count(),
+            1,
+            "{name} hook must render the canonical doctrine exactly once"
         );
     }
+
     assert_eq!(
-        skill.matches("Herdr-injected session context").count(),
+        OPENCODE_PLUGIN_ASSET
+            .matches("__HERDR_SESSION_DOCTRINE_JAVASCRIPT__")
+            .count(),
         1,
-        "public operator skill must contain exactly one pointer to injected worker context"
+        "OpenCode plugin must contain one doctrine placeholder"
     );
-    assert!(skill.contains("confirmed non-worker support pane"));
-    assert!(skill.contains("Do not use them to coordinate with an agent."));
+    let rendered = render_opencode_plugin_asset(OPENCODE_PLUGIN_ASSET);
+    assert!(
+        !rendered.contains("__HERDR_SESSION_DOCTRINE_JAVASCRIPT__"),
+        "rendered OpenCode plugin must not retain the placeholder"
+    );
+    assert_eq!(
+        rendered
+            .matches(&javascript_string_literal_for_test(
+                SESSION_DOCTRINE.trim_end()
+            ))
+            .count(),
+        1,
+        "OpenCode plugin must render the canonical doctrine exactly once"
+    );
+}
+
+fn javascript_string_literal_for_test(value: &str) -> String {
+    serde_json::to_string(value).unwrap()
 }
 
 #[test]
-fn delegation_doctrine_stays_portable_and_uses_filtered_waits() {
-    assert!(!DELEGATION_DOCTRINE.contains("/home/"));
-    assert!(!DELEGATION_DOCTRINE.contains("dangerously-bypass"));
-    assert!(!DELEGATION_DOCTRINE.contains("unfiltered wait"));
-    assert!(!DELEGATION_DOCTRINE.contains("wait and read whatever arrives"));
-    assert!(DELEGATION_DOCTRINE.contains("wait --from <worker> --timeout <ms>"));
+fn session_doctrine_stays_portable_and_separates_worker_coordination_from_output_waits() {
+    assert!(!SESSION_DOCTRINE.contains("/home/"));
+    assert!(!SESSION_DOCTRINE.contains("dangerously-bypass"));
+    assert!(!SESSION_DOCTRINE.contains("mail wait"));
+    assert!(!SESSION_DOCTRINE.contains("wait --from"));
+    assert!(SESSION_DOCTRINE.contains("then end your turn"));
+    assert!(SESSION_DOCTRINE.contains("poll agent status"));
+    assert!(SESSION_DOCTRINE.contains("`wait output`"));
+    assert!(SESSION_DOCTRINE.contains("confirmed support processes"));
 }
 
 #[cfg(unix)]
@@ -240,8 +257,8 @@ fn assert_session_hook_injects_doctrine_only_inside_herdr(asset: &str, name: &st
         String::from_utf8_lossy(&inside.stderr)
     );
     let output = String::from_utf8(inside.stdout).unwrap();
-    assert_eq!(output, format!("{}\n", DELEGATION_DOCTRINE.trim_end()));
-    assert_eq!(output.matches(DELEGATION_DOCTRINE.trim_end()).count(), 1);
+    assert_eq!(output, format!("{}\n", SESSION_DOCTRINE.trim_end()));
+    assert_eq!(output.matches(SESSION_DOCTRINE.trim_end()).count(), 1);
 
     let _ = fs::remove_dir_all(base);
 }
@@ -275,17 +292,17 @@ fn powershell_session_hooks_gate_and_embed_doctrine_once() {
             .find(r#"if ($env:HERDR_ENV -ne "1") { exit 0 }"#)
             .unwrap_or_else(|| panic!("{name} PowerShell hook is missing the HERDR_ENV gate"));
         let placeholder = asset
-            .find("__HERDR_DELEGATION_DOCTRINE__")
+            .find("__HERDR_SESSION_DOCTRINE__")
             .unwrap_or_else(|| panic!("{name} PowerShell hook is missing the doctrine"));
         assert!(
             gate < placeholder,
             "{name} PowerShell hook must gate the doctrine before exposing it"
         );
-        assert_eq!(asset.matches("__HERDR_DELEGATION_DOCTRINE__").count(), 1);
+        assert_eq!(asset.matches("__HERDR_SESSION_DOCTRINE__").count(), 1);
 
         let rendered = render_hook_asset(asset);
-        assert!(!rendered.contains("__HERDR_DELEGATION_DOCTRINE__"));
-        assert_eq!(rendered.matches(DELEGATION_DOCTRINE.trim_end()).count(), 1);
+        assert!(!rendered.contains("__HERDR_SESSION_DOCTRINE__"));
+        assert_eq!(rendered.matches(SESSION_DOCTRINE.trim_end()).count(), 1);
     }
 }
 
@@ -1161,6 +1178,85 @@ fn claude_v2_integration_status_is_outdated() {
 }
 
 #[test]
+fn claude_status_rejects_same_version_hook_content_drift() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let installed = install_claude().unwrap();
+    let current = integration_status(crate::api::schema::IntegrationTarget::Claude).unwrap();
+    assert_eq!(current.state, IntegrationStatusKind::Current);
+
+    let mut drifted = fs::read_to_string(&installed.hook_path).unwrap();
+    assert_eq!(
+        parse_integration_version(&drifted),
+        Some(CLAUDE_INTEGRATION_VERSION)
+    );
+    drifted.push_str("\n# stale same-version doctrine content\n");
+    fs::write(&installed.hook_path, drifted).unwrap();
+
+    let stale = integration_status(crate::api::schema::IntegrationTarget::Claude).unwrap();
+    assert_eq!(stale.installed_version, Some(CLAUDE_INTEGRATION_VERSION));
+    assert_eq!(stale.state, IntegrationStatusKind::Outdated);
+    let listed = installed_integration_statuses()
+        .into_iter()
+        .find(|status| status.target == crate::api::schema::IntegrationTarget::Claude)
+        .unwrap();
+    assert_eq!(listed.state, IntegrationStatusKind::Outdated);
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn claude_status_requires_current_hook_registrations_and_no_legacy_doctrine() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let installed = install_claude().unwrap();
+    let mut settings: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.settings_path).unwrap()).unwrap();
+    settings["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("SessionStart");
+    fs::write(
+        &installed.settings_path,
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Claude)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    install_claude().unwrap();
+    fs::write(
+        claude_dir.join("CLAUDE.md"),
+        format!("{DOCTRINE_BLOCK_BEGIN}\nlegacy\n{DOCTRINE_BLOCK_END}\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Claude)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
 fn uninstall_claude_removes_herdr_hooks_and_preserves_others() {
     let _lock = integration_env_lock();
     let base = unique_base();
@@ -1275,8 +1371,8 @@ fn install_claude_embeds_doctrine_in_session_hook_and_skips_instructions_file() 
     let installed = install_claude().unwrap();
     let hook = fs::read_to_string(&installed.hook_path).unwrap();
 
-    assert!(hook.contains(DELEGATION_DOCTRINE.trim_end()));
-    assert!(!hook.contains("__HERDR_DELEGATION_DOCTRINE__"));
+    assert!(hook.contains(SESSION_DOCTRINE.trim_end()));
+    assert!(!hook.contains("__HERDR_SESSION_DOCTRINE__"));
     assert!(!claude_dir.join("CLAUDE.md").exists());
 
     std::env::remove_var("HOME");
@@ -1365,6 +1461,92 @@ fn codex_v2_integration_status_is_outdated() {
     assert_eq!(codex.state, IntegrationStatusKind::Outdated);
 
     std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn codex_status_rejects_same_version_hook_content_drift() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+
+    let installed = install_codex().unwrap();
+    let current = integration_status(crate::api::schema::IntegrationTarget::Codex).unwrap();
+    assert_eq!(current.state, IntegrationStatusKind::Current);
+
+    let mut drifted = fs::read_to_string(&installed.hook_path).unwrap();
+    assert_eq!(
+        parse_integration_version(&drifted),
+        Some(CODEX_INTEGRATION_VERSION)
+    );
+    drifted.push_str("\n# stale same-version doctrine content\n");
+    fs::write(&installed.hook_path, drifted).unwrap();
+
+    let stale = integration_status(crate::api::schema::IntegrationTarget::Codex).unwrap();
+    assert_eq!(stale.installed_version, Some(CODEX_INTEGRATION_VERSION));
+    assert_eq!(stale.state, IntegrationStatusKind::Outdated);
+    let listed = installed_integration_statuses()
+        .into_iter()
+        .find(|status| status.target == crate::api::schema::IntegrationTarget::Codex)
+        .unwrap();
+    assert_eq!(listed.state, IntegrationStatusKind::Outdated);
+
+    clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn codex_status_requires_current_hook_registrations_feature_flag_and_no_legacy_doctrine() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+
+    let installed = install_codex().unwrap();
+    let mut hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    hooks["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("PermissionRequest");
+    fs::write(
+        &installed.hooks_path,
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    install_codex().unwrap();
+    fs::write(&installed.config_path, "[features]\nhooks = false\n").unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    install_codex().unwrap();
+    fs::write(
+        codex_home.join("AGENTS.md"),
+        format!("{DOCTRINE_BLOCK_BEGIN}\nlegacy\n{DOCTRINE_BLOCK_END}\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    clear_integration_path_env();
     let _ = fs::remove_dir_all(base);
 }
 
@@ -1588,8 +1770,8 @@ fn install_codex_embeds_doctrine_in_session_hook_and_skips_instructions_file() {
     let installed = install_codex().unwrap();
     let hook = fs::read_to_string(&installed.hook_path).unwrap();
 
-    assert!(hook.contains(DELEGATION_DOCTRINE.trim_end()));
-    assert!(!hook.contains("__HERDR_DELEGATION_DOCTRINE__"));
+    assert!(hook.contains(SESSION_DOCTRINE.trim_end()));
+    assert!(!hook.contains("__HERDR_SESSION_DOCTRINE__"));
     assert!(!codex_dir.join("AGENTS.md").exists());
 
     std::env::remove_var("HOME");
@@ -2448,7 +2630,7 @@ fn install_opencode_writes_plugin_to_plugins_dir() {
         render_opencode_plugin_asset(OPENCODE_PLUGIN_ASSET)
     );
     assert!(plugin_content.contains("\"experimental.chat.system.transform\""));
-    assert!(!plugin_content.contains("__HERDR_DELEGATION_DOCTRINE_JAVASCRIPT__"));
+    assert!(!plugin_content.contains("__HERDR_SESSION_DOCTRINE_JAVASCRIPT__"));
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -2520,7 +2702,7 @@ process.stdout.write(JSON.stringify({
     assert_eq!(inside["hasTransform"], true);
     assert_eq!(
         inside["system"],
-        json!(["base", DELEGATION_DOCTRINE.trim_end()])
+        json!(["base", SESSION_DOCTRINE.trim_end()])
     );
 
     std::env::remove_var("HOME");

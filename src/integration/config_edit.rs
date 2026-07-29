@@ -7,7 +7,7 @@ use super::command::{hook_command, legacy_bash_hook_command};
 #[cfg(windows)]
 use super::file_ops::legacy_bash_hook_path;
 #[cfg(test)]
-use super::DELEGATION_DOCTRINE;
+use super::SESSION_DOCTRINE;
 use super::{
     DOCTRINE_BLOCK_BEGIN, DOCTRINE_BLOCK_END, HERMES_PLUGIN_INSTALL_NAME, KIMI_CONFIG_BLOCK_BEGIN,
     KIMI_CONFIG_BLOCK_END, KIMI_HOOK_EVENTS,
@@ -766,7 +766,7 @@ pub(crate) fn build_markdown_doctrine_block(content: &str) -> String {
 
     result.push_str(DOCTRINE_BLOCK_BEGIN);
     result.push('\n');
-    result.push_str(DELEGATION_DOCTRINE.trim_end_matches('\n'));
+    result.push_str(SESSION_DOCTRINE.trim_end_matches('\n'));
     result.push('\n');
     result.push_str(DOCTRINE_BLOCK_END);
     result.push('\n');

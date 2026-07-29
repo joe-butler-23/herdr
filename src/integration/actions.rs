@@ -67,10 +67,6 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
                     "ensured claude settings at {}",
                     installed.settings_path.display()
                 ),
-                format!(
-                    "ensured claude delegation doctrine at {}",
-                    installed.doctrine_path.display()
-                ),
             ]
         }
         crate::api::schema::IntegrationTarget::Codex => {
@@ -84,10 +80,6 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
                 format!(
                     "ensured codex config at {}",
                     installed.config_path.display()
-                ),
-                format!(
-                    "ensured codex delegation doctrine at {}",
-                    installed.doctrine_path.display()
                 ),
             ]
         }
@@ -273,12 +265,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_doctrine {
                 messages.push(format!(
-                    "removed herdr delegation doctrine from {}",
+                    "removed legacy herdr delegation doctrine from {}",
                     result.doctrine_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr delegation doctrine found in {}",
+                    "no legacy herdr delegation doctrine found in {}",
                     result.doctrine_path.display()
                 ));
             }
@@ -315,12 +307,12 @@ pub(crate) fn uninstall_target(
             ));
             if result.updated_doctrine {
                 messages.push(format!(
-                    "removed herdr delegation doctrine from {}",
+                    "removed legacy herdr delegation doctrine from {}",
                     result.doctrine_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr delegation doctrine found in {}",
+                    "no legacy herdr delegation doctrine found in {}",
                     result.doctrine_path.display()
                 ));
             }
@@ -460,12 +452,12 @@ pub(crate) fn uninstall_target(
             };
             if result.updated_doctrine {
                 messages.push(format!(
-                    "removed herdr delegation doctrine from {}",
+                    "removed legacy herdr delegation doctrine from {}",
                     result.doctrine_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr delegation doctrine found in {}",
+                    "no legacy herdr delegation doctrine found in {}",
                     result.doctrine_path.display()
                 ));
             }
