@@ -117,6 +117,98 @@ fn kimi_hook_command(hook_path: &Path, action: &str) -> String {
     hook_command(hook_path, Some(action))
 }
 
+#[cfg(not(windows))]
+fn absolute_bash_hook_command(hook_path: &Path, action: &str) -> String {
+    format!(
+        "/run/current-system/sw/bin/bash {} {action}",
+        shell_single_quote(&hook_path.display().to_string())
+    )
+}
+
+#[cfg(not(windows))]
+#[test]
+fn unix_owned_codex_hook_recognition_requires_one_exact_herdr_invocation() {
+    let hook_path = Path::new("/tmp/herdr-agent-state.sh");
+    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
+    let owned_plain = json!({
+        "type": "command",
+        "command": hook_command(hook_path, Some("session")),
+    });
+    let owned_absolute = json!({
+        "type": "command",
+        "command": absolute_bash_hook_command(hook_path, "session"),
+    });
+    assert!(is_owned_codex_hook_command(
+        &owned_plain,
+        hook_path,
+        "session"
+    ));
+    assert!(is_owned_codex_hook_command(
+        &owned_absolute,
+        hook_path,
+        "session"
+    ));
+
+    for hook in [
+        json!({ "type": "command", "command": format!("bash {quoted_hook_path} session extra") }),
+        json!({ "type": "command", "command": format!("bash {quoted_hook_path} session && echo nope") }),
+        json!({ "type": "command", "command": format!("bash {quoted_hook_path} another-action") }),
+        json!({ "type": "command", "command": "bash '/tmp/other-script.sh' session" }),
+        json!({ "type": "prompt", "command": hook_command(hook_path, Some("session")) }),
+        json!({ "type": "command", "command": format!("sh {quoted_hook_path} session") }),
+    ] {
+        assert!(!is_owned_codex_hook_command(&hook, hook_path, "session"));
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_owned_codex_hook_recognition_accepts_only_exact_current_and_legacy_commands() {
+    let hook_path = Path::new(r"C:\Users\joe\.codex\herdr-agent-state.ps1");
+    let legacy_hook_path = legacy_bash_hook_path(hook_path);
+    let current = json!({
+        "type": "command",
+        "command": hook_command(hook_path, Some("session")),
+    });
+    let legacy_current_path = json!({
+        "type": "command",
+        "command": legacy_bash_hook_command(hook_path, Some("session")),
+    });
+    let legacy_shell_path = json!({
+        "type": "command",
+        "command": legacy_bash_hook_command(&legacy_hook_path, Some("session")),
+    });
+
+    for hook in [&current, &legacy_current_path, &legacy_shell_path] {
+        assert!(is_owned_codex_hook_command(hook, hook_path, "session"));
+    }
+
+    for hook in [
+        json!({
+            "type": "command",
+            "command": format!("{} extra", hook_command(hook_path, Some("session"))),
+        }),
+        json!({
+            "type": "command",
+            "command": legacy_bash_hook_command(hook_path, Some("another-action")),
+        }),
+        json!({
+            "type": "command",
+            "command": "bash 'C:\\Users\\joe\\.codex\\other-script.ps1' session",
+        }),
+        json!({
+            "type": "command",
+            "command": format!("/usr/bin/bash '{}' session", hook_path.display()),
+        }),
+        json!({
+            "type": "prompt",
+            "command": hook_command(hook_path, Some("session")),
+        }),
+    ] {
+        assert!(!is_owned_codex_hook_command(&hook, hook_path, "session"));
+    }
+}
+
 fn kimi_config_hooks(config: &str) -> Vec<toml::Value> {
     let parsed: toml::Value = toml::from_str(config).unwrap();
     parsed
@@ -1550,6 +1642,290 @@ fn codex_status_requires_current_hook_registrations_feature_flag_and_no_legacy_d
     let _ = fs::remove_dir_all(base);
 }
 
+#[cfg(not(windows))]
+#[test]
+fn codex_status_rejects_legacy_and_duplicate_owned_bash_registrations_until_install() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+
+    let installed = install_codex().unwrap();
+    let mut hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"] =
+        Value::String(absolute_bash_hook_command(&installed.hook_path, "session"));
+    fs::write(
+        &installed.hooks_path,
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    install_codex().unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Current
+    );
+
+    let mut hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    hooks["hooks"]["Stop"].as_array_mut().unwrap().push(json!({
+        "hooks": [{
+            "type": "command",
+            "command": absolute_bash_hook_command(&installed.hook_path, "mail-done"),
+            "timeout": 10,
+        }],
+    }));
+    fs::write(
+        &installed.hooks_path,
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    install_codex().unwrap();
+    let hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    assert_eq!(hooks["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        hooks["hooks"]["PermissionRequest"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Current
+    );
+
+    clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_codex_install_status_and_uninstall_handle_current_and_legacy_commands() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+
+    let hook_path = codex_home.join(CODEX_HOOK_INSTALL_NAME);
+    let legacy_hook_path = legacy_bash_hook_path(&hook_path);
+    let session_lookalike = format!("{} extra", hook_command(&hook_path, Some("session")));
+    let hooks = json!({
+        "hooks": {
+            "SessionStart": [{ "hooks": [
+                {
+                    "type": "command",
+                    "command": legacy_bash_hook_command(&legacy_hook_path, Some("session")),
+                    "timeout": 10
+                },
+                {
+                    "type": "command",
+                    "command": session_lookalike,
+                    "timeout": 10
+                }
+            ] }],
+            "Stop": [{ "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command(&hook_path, Some("mail-done")),
+                    "timeout": 10
+                },
+                {
+                    "type": "command",
+                    "command": legacy_bash_hook_command(&hook_path, Some("mail-done")),
+                    "timeout": 10
+                }
+            ] }],
+            "PermissionRequest": [{ "hooks": [
+                {
+                    "type": "command",
+                    "command": legacy_bash_hook_command(&legacy_hook_path, Some("mail-blocked")),
+                    "timeout": 10
+                },
+                {
+                    "type": "prompt",
+                    "command": hook_command(&hook_path, Some("mail-blocked")),
+                    "timeout": 10
+                }
+            ] }],
+            "UserPromptSubmit": [{ "hooks": [
+                {
+                    "type": "command",
+                    "command": legacy_bash_hook_command(&legacy_hook_path, Some("working")),
+                    "timeout": 10
+                },
+                {
+                    "type": "command",
+                    "command": "echo keep",
+                    "timeout": 10
+                }
+            ] }],
+            "PreToolUse": [{ "hooks": [{
+                "type": "command",
+                "command": legacy_bash_hook_command(&hook_path, Some("working")),
+                "timeout": 10
+            }] }]
+        }
+    });
+    fs::write(
+        codex_home.join("hooks.json"),
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+
+    let installed = install_codex().unwrap();
+    let mut hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    for (event, action) in [
+        ("SessionStart", "session"),
+        ("Stop", "mail-done"),
+        ("PermissionRequest", "mail-blocked"),
+    ] {
+        let owned = hooks["hooks"][event]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|entry| entry["hooks"].as_array().unwrap().iter())
+            .filter(|hook| is_owned_codex_hook_command(hook, &installed.hook_path, action))
+            .collect::<Vec<_>>();
+        assert_eq!(owned.len(), 1, "expected one canonical {event} command");
+        assert_eq!(
+            owned[0]["command"],
+            hook_command(&installed.hook_path, Some(action))
+        );
+    }
+    assert!(hooks["hooks"]["SessionStart"][0]["hooks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hook| hook["command"] == session_lookalike));
+    assert_eq!(
+        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+        "echo keep"
+    );
+    assert!(hooks["hooks"].get("PreToolUse").is_none());
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Current
+    );
+
+    let canonical_session = hook_command(&installed.hook_path, Some("session"));
+    let legacy_session = legacy_bash_hook_command(&legacy_hook_path, Some("session"));
+    let mut replaced = false;
+    for entry in hooks["hooks"]["SessionStart"].as_array_mut().unwrap() {
+        for hook in entry["hooks"].as_array_mut().unwrap() {
+            if hook.get("command").and_then(Value::as_str) == Some(canonical_session.as_str()) {
+                hook["command"] = Value::String(legacy_session.clone());
+                replaced = true;
+            }
+        }
+    }
+    assert!(replaced);
+    fs::write(
+        &installed.hooks_path,
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Outdated
+    );
+
+    install_codex().unwrap();
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Current
+    );
+
+    let mut hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    hooks["hooks"]["Stop"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "hooks": [{
+            "type": "command",
+            "command": legacy_bash_hook_command(&legacy_hook_path, Some("mail-done")),
+            "timeout": 10
+        }] }));
+    fs::write(
+        &installed.hooks_path,
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+
+    let result = uninstall_codex().unwrap();
+    let hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    assert!(result.updated_hooks);
+    assert!(result.removed_hook_file);
+    assert!(!installed.hook_path.exists());
+    for (event, action) in [
+        ("SessionStart", "session"),
+        ("Stop", "mail-done"),
+        ("PermissionRequest", "mail-blocked"),
+    ] {
+        let owned_count = hooks["hooks"]
+            .get(event)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|entry| {
+                entry
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .filter(|hook| is_owned_codex_hook_command(hook, &installed.hook_path, action))
+            .count();
+        assert_eq!(owned_count, 0, "uninstall left an owned {event} command");
+    }
+    assert!(hooks["hooks"]["SessionStart"][0]["hooks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hook| hook["command"] == session_lookalike));
+    assert_eq!(
+        hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["type"],
+        "prompt"
+    );
+    assert_eq!(
+        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+        "echo keep"
+    );
+
+    clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
 #[test]
 fn install_codex_writes_hook_and_updates_hooks_and_config() {
     let _lock = integration_env_lock();
@@ -1592,6 +1968,98 @@ fn install_codex_writes_hook_and_updates_hooks_and_config() {
     assert!(!config.contains("codex_hooks"));
 
     std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn install_codex_canonicalizes_owned_absolute_bash_hooks_and_preserves_lookalikes() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+    let hook_path = codex_home.join(CODEX_HOOK_INSTALL_NAME);
+    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
+    let hooks = json!({
+        "hooks": {
+            "SessionStart": [{ "hooks": [
+                { "type": "command", "command": absolute_bash_hook_command(&hook_path, "session"), "timeout": 10 },
+                { "type": "command", "command": "echo keep-session", "timeout": 10 }
+            ] }],
+            "Stop": [{ "hooks": [
+                { "type": "command", "command": absolute_bash_hook_command(&hook_path, "mail-done"), "timeout": 10 },
+                { "type": "command", "command": format!("bash {quoted_hook_path} mail-done; echo keep"), "timeout": 10 }
+            ] }],
+            "PermissionRequest": [{ "hooks": [
+                { "type": "command", "command": absolute_bash_hook_command(&hook_path, "mail-blocked"), "timeout": 10 },
+                { "type": "prompt", "command": format!("bash {quoted_hook_path} mail-blocked"), "timeout": 10 }
+            ] }],
+            "PreToolUse": [{ "hooks": [
+                { "type": "command", "command": format!("bash {quoted_hook_path} working extra"), "timeout": 10 },
+                { "type": "command", "command": format!("bash {quoted_hook_path} user-action"), "timeout": 10 }
+            ] }]
+        }
+    });
+    fs::write(
+        codex_home.join("hooks.json"),
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+
+    let installed = install_codex().unwrap();
+    let hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+    for (event, action) in [
+        ("SessionStart", "session"),
+        ("Stop", "mail-done"),
+        ("PermissionRequest", "mail-blocked"),
+    ] {
+        let owned = hooks["hooks"][event]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|entry| entry["hooks"].as_array().unwrap().iter())
+            .filter(|hook| is_owned_codex_hook_command(hook, &installed.hook_path, action))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owned.len(),
+            1,
+            "expected one canonical {event} registration"
+        );
+        assert_eq!(
+            owned[0]["command"],
+            hook_command(&installed.hook_path, Some(action))
+        );
+    }
+    assert_eq!(
+        hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+        "echo keep-session"
+    );
+    assert!(hooks["hooks"]["Stop"][0]["hooks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hook| hook["command"] == format!("bash {quoted_hook_path} mail-done; echo keep")));
+    assert_eq!(
+        hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["type"],
+        "prompt"
+    );
+    assert_eq!(
+        hooks["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        integration_status(crate::api::schema::IntegrationTarget::Codex)
+            .unwrap()
+            .state,
+        IntegrationStatusKind::Current
+    );
+
+    clear_integration_path_env();
     let _ = fs::remove_dir_all(base);
 }
 
@@ -1739,6 +2207,76 @@ fn uninstall_codex_removes_herdr_hooks_and_leaves_config_alone() {
     assert!(config.contains("other = true"));
 
     std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn uninstall_codex_removes_owned_absolute_and_plain_hooks_but_preserves_lookalikes() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+    let hook_path = codex_home.join(CODEX_HOOK_INSTALL_NAME);
+    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
+    fs::write(&hook_path, render_hook_asset(CODEX_HOOK_ASSET)).unwrap();
+    let hooks = json!({
+        "hooks": {
+            "SessionStart": [{ "hooks": [
+                { "type": "command", "command": hook_command(&hook_path, Some("session")), "timeout": 10 },
+                { "type": "command", "command": absolute_bash_hook_command(&hook_path, "session"), "timeout": 10 }
+            ] }],
+            "Stop": [{ "hooks": [
+                { "type": "command", "command": hook_command(&hook_path, Some("mail-done")), "timeout": 10 },
+                { "type": "command", "command": absolute_bash_hook_command(&hook_path, "mail-done"), "timeout": 10 },
+                { "type": "command", "command": format!("bash {quoted_hook_path} mail-done extra"), "timeout": 10 }
+            ] }],
+            "PermissionRequest": [{ "hooks": [
+                { "type": "command", "command": hook_command(&hook_path, Some("mail-blocked")), "timeout": 10 },
+                { "type": "command", "command": absolute_bash_hook_command(&hook_path, "mail-blocked"), "timeout": 10 },
+                { "type": "command", "command": "echo keep", "timeout": 10 }
+            ] }],
+            "PreToolUse": [{ "hooks": [
+                { "type": "command", "command": format!("bash {quoted_hook_path} working && echo keep"), "timeout": 10 },
+                { "type": "prompt", "command": hook_command(&hook_path, Some("working")), "timeout": 10 }
+            ] }]
+        }
+    });
+    fs::write(
+        codex_home.join("hooks.json"),
+        serde_json::to_string_pretty(&hooks).unwrap(),
+    )
+    .unwrap();
+
+    let result = uninstall_codex().unwrap();
+    let hooks: Value =
+        serde_json::from_str(&fs::read_to_string(codex_home.join("hooks.json")).unwrap()).unwrap();
+    assert!(result.updated_hooks);
+    assert!(result.removed_hook_file);
+    assert!(!hook_path.exists());
+    assert!(hooks["hooks"].get("SessionStart").is_none());
+    assert_eq!(
+        hooks["hooks"]["Stop"][0]["hooks"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
+        format!("bash {quoted_hook_path} mail-done extra")
+    );
+    assert_eq!(
+        hooks["hooks"]["PermissionRequest"][0]["hooks"][0]["command"],
+        "echo keep"
+    );
+    assert_eq!(
+        hooks["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    clear_integration_path_env();
     let _ = fs::remove_dir_all(base);
 }
 

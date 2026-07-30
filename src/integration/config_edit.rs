@@ -3,6 +3,8 @@ use std::path::Path;
 
 use serde_json::{json, Map, Value};
 
+#[cfg(not(windows))]
+use super::command::shell_single_quote;
 use super::command::{hook_command, legacy_bash_hook_command};
 #[cfg(windows)]
 use super::file_ops::legacy_bash_hook_path;
@@ -300,6 +302,89 @@ pub(crate) fn remove_hook_commands(
         removed |= remove_command_hook(hooks, event, &command)?;
     }
     Ok(removed)
+}
+
+/// Remove only a Herdr-owned Codex invocation for the requested lifecycle
+/// action. Ownership is platform-aware: Unix accepts an exact `bash` or
+/// absolute-`/bash` invocation, while Windows accepts the exact current
+/// PowerShell command and supported legacy Bash forms. Operators, extra
+/// arguments, different scripts, and non-command entries remain user-owned.
+pub(crate) fn remove_owned_codex_hook_commands(
+    hooks: &mut Map<String, Value>,
+    event: &str,
+    hook_path: &Path,
+    action: &str,
+) -> io::Result<bool> {
+    let Some(entries_value) = hooks.get_mut(event) else {
+        return Ok(false);
+    };
+
+    let entries = entries_value
+        .as_array_mut()
+        .ok_or_else(|| io::Error::other(format!("hook entries for {event} must be an array")))?;
+
+    let mut removed = false;
+    entries.retain_mut(|entry| {
+        let Some(entry_object) = entry.as_object_mut() else {
+            return true;
+        };
+        let Some(hook_entries) = entry_object.get_mut("hooks") else {
+            return true;
+        };
+        let Some(hook_entries) = hook_entries.as_array_mut() else {
+            return true;
+        };
+
+        let before = hook_entries.len();
+        hook_entries.retain(|hook| !is_owned_codex_hook_command(hook, hook_path, action));
+        if hook_entries.len() != before {
+            removed = true;
+        }
+
+        !hook_entries.is_empty()
+    });
+
+    if entries.is_empty() {
+        hooks.remove(event);
+    }
+
+    Ok(removed)
+}
+
+pub(crate) fn is_owned_codex_hook_command(hook: &Value, hook_path: &Path, action: &str) -> bool {
+    hook.get("type").and_then(Value::as_str) == Some("command")
+        && hook
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| codex_command_invokes_hook(command, hook_path, action))
+}
+
+#[cfg(windows)]
+fn codex_command_invokes_hook(command: &str, hook_path: &Path, action: &str) -> bool {
+    hook_command_variants(hook_path, Some(action))
+        .iter()
+        .any(|owned| owned == command)
+}
+
+#[cfg(not(windows))]
+fn codex_command_invokes_hook(command: &str, hook_path: &Path, action: &str) -> bool {
+    bash_command_invokes_hook(command, hook_path, action)
+}
+
+#[cfg(not(windows))]
+fn bash_command_invokes_hook(command: &str, hook_path: &Path, action: &str) -> bool {
+    let Some((interpreter, invocation)) = command.split_once(' ') else {
+        return false;
+    };
+    if interpreter != "bash" && !(interpreter.starts_with('/') && interpreter.ends_with("/bash")) {
+        return false;
+    }
+
+    invocation
+        == format!(
+            "{} {action}",
+            shell_single_quote(&hook_path.display().to_string())
+        )
 }
 
 pub(crate) fn remove_direct_hook_commands(

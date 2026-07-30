@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::command::hook_command;
-use super::config_edit::build_codex_config_with_hooks;
+use super::config_edit::{build_codex_config_with_hooks, is_owned_codex_hook_command};
 use super::env::*;
 
 pub(crate) fn integration_target_label(
@@ -578,7 +578,7 @@ fn codex_installation_is_current_checked(hook_path: &Path, content: &str) -> io:
         },
     ];
 
-    Ok(command_hook_registrations_are_current(
+    Ok(codex_command_hook_registrations_are_current(
         &config_dir.join("hooks.json"),
         hook_path,
         &expectations,
@@ -641,6 +641,69 @@ fn command_hook_registrations_are_current(
                 }) else {
                     return Ok(false);
                 };
+                matches[index] = matches[index].saturating_add(1);
+            }
+        }
+    }
+
+    Ok(matches.into_iter().all(|count| count == 1))
+}
+
+fn codex_command_hook_registrations_are_current(
+    config_path: &Path,
+    hook_path: &Path,
+    expectations: &[CommandHookExpectation<'_>],
+) -> io::Result<bool> {
+    let content = match fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    let root: Value = serde_json::from_str(&content).map_err(|err| {
+        io::Error::other(format!(
+            "failed to parse integration hooks at {}: {err}",
+            config_path.display()
+        ))
+    })?;
+    let Some(hooks) = root.get("hooks").and_then(Value::as_object) else {
+        return Ok(false);
+    };
+
+    let mut matches = vec![0_u8; expectations.len()];
+    for (event, entries) in hooks {
+        let Some(entries) = entries.as_array() else {
+            if expectations
+                .iter()
+                .any(|expectation| expectation.event == event)
+            {
+                return Ok(false);
+            }
+            continue;
+        };
+        for entry in entries {
+            let matcher = entry.get("matcher").and_then(Value::as_str);
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for command in commands {
+                let Some(command_text) = command.get("command").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some((index, expectation)) =
+                    expectations.iter().enumerate().find(|(_, expectation)| {
+                        expectation.event == event
+                            && is_owned_codex_hook_command(command, hook_path, expectation.action)
+                    })
+                else {
+                    continue;
+                };
+
+                if command_text != hook_command(hook_path, Some(expectation.action))
+                    || matcher != expectation.matcher
+                    || command.get("timeout").and_then(Value::as_u64) != Some(10)
+                {
+                    return Ok(false);
+                }
                 matches[index] = matches[index].saturating_add(1);
             }
         }

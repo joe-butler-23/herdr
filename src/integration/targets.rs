@@ -10,7 +10,7 @@ use super::config_edit::{
     ensure_direct_command_hook, ensure_hermes_plugin_enabled, ensure_hooks_object,
     ensure_simple_command_hook, hooks_object_if_present, remove_direct_hook_commands,
     remove_hermes_plugin_enabled, remove_hook_commands, remove_kimi_config_block,
-    remove_markdown_doctrine_block, remove_simple_command_hook,
+    remove_markdown_doctrine_block, remove_owned_codex_hook_commands, remove_simple_command_hook,
 };
 use super::env::{
     claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir, hermes_dir,
@@ -218,14 +218,14 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
         "codex hooks file",
         "codex hooks file hooks",
     )?;
-    remove_hook_commands(hooks, "PermissionRequest", &hook_path, Some("blocked"))?;
-    remove_hook_commands(hooks, "SessionStart", &hook_path, Some("idle"))?;
-    remove_hook_commands(hooks, "UserPromptSubmit", &hook_path, Some("working"))?;
-    remove_hook_commands(hooks, "PreToolUse", &hook_path, Some("working"))?;
-    remove_hook_commands(hooks, "Stop", &hook_path, Some("idle"))?;
-    remove_hook_commands(hooks, "SessionStart", &hook_path, Some("session"))?;
-    remove_hook_commands(hooks, "Stop", &hook_path, Some("mail-done"))?;
-    remove_hook_commands(hooks, "PermissionRequest", &hook_path, Some("mail-blocked"))?;
+    remove_owned_codex_hook_commands(hooks, "PermissionRequest", &hook_path, "blocked")?;
+    remove_owned_codex_hook_commands(hooks, "SessionStart", &hook_path, "idle")?;
+    remove_owned_codex_hook_commands(hooks, "UserPromptSubmit", &hook_path, "working")?;
+    remove_owned_codex_hook_commands(hooks, "PreToolUse", &hook_path, "working")?;
+    remove_owned_codex_hook_commands(hooks, "Stop", &hook_path, "idle")?;
+    remove_owned_codex_hook_commands(hooks, "SessionStart", &hook_path, "session")?;
+    remove_owned_codex_hook_commands(hooks, "Stop", &hook_path, "mail-done")?;
+    remove_owned_codex_hook_commands(hooks, "PermissionRequest", &hook_path, "mail-blocked")?;
     ensure_command_hook(
         hooks,
         "SessionStart",
@@ -711,19 +711,29 @@ pub(crate) fn uninstall_codex() -> io::Result<CodexUninstallResult> {
             "codex hooks file",
             "codex hooks file hooks",
         )? {
-            updated_hooks |= remove_hook_commands(hooks, "SessionStart", &hook_path, Some("idle"))?;
             updated_hooks |=
-                remove_hook_commands(hooks, "SessionStart", &hook_path, Some("session"))?;
+                remove_owned_codex_hook_commands(hooks, "SessionStart", &hook_path, "idle")?;
             updated_hooks |=
-                remove_hook_commands(hooks, "UserPromptSubmit", &hook_path, Some("working"))?;
+                remove_owned_codex_hook_commands(hooks, "SessionStart", &hook_path, "session")?;
             updated_hooks |=
-                remove_hook_commands(hooks, "PreToolUse", &hook_path, Some("working"))?;
+                remove_owned_codex_hook_commands(hooks, "UserPromptSubmit", &hook_path, "working")?;
             updated_hooks |=
-                remove_hook_commands(hooks, "PermissionRequest", &hook_path, Some("blocked"))?;
-            updated_hooks |= remove_hook_commands(hooks, "Stop", &hook_path, Some("idle"))?;
-            updated_hooks |= remove_hook_commands(hooks, "Stop", &hook_path, Some("mail-done"))?;
+                remove_owned_codex_hook_commands(hooks, "PreToolUse", &hook_path, "working")?;
+            updated_hooks |= remove_owned_codex_hook_commands(
+                hooks,
+                "PermissionRequest",
+                &hook_path,
+                "blocked",
+            )?;
+            updated_hooks |= remove_owned_codex_hook_commands(hooks, "Stop", &hook_path, "idle")?;
             updated_hooks |=
-                remove_hook_commands(hooks, "PermissionRequest", &hook_path, Some("mail-blocked"))?;
+                remove_owned_codex_hook_commands(hooks, "Stop", &hook_path, "mail-done")?;
+            updated_hooks |= remove_owned_codex_hook_commands(
+                hooks,
+                "PermissionRequest",
+                &hook_path,
+                "mail-blocked",
+            )?;
         }
 
         if updated_hooks {
