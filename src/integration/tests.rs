@@ -1813,7 +1813,7 @@ fn windows_codex_install_status_and_uninstall_handle_current_and_legacy_commands
         assert_eq!(owned.len(), 1, "expected one canonical {event} command");
         assert_eq!(
             owned[0]["command"],
-            hook_command(&installed.hook_path, Some(action))
+            resolved_bash_hook_command(&installed.hook_path, Some(action)).unwrap()
         );
     }
     assert!(hooks["hooks"]["SessionStart"][0]["hooks"]
@@ -1973,6 +1973,73 @@ fn install_codex_writes_hook_and_updates_hooks_and_config() {
 
 #[cfg(not(windows))]
 #[test]
+fn install_codex_registers_absolute_bash_commands() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+
+    let installed = install_codex().unwrap();
+    let hooks: Value =
+        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+
+    for event in ["SessionStart", "Stop", "PermissionRequest"] {
+        let command = hooks["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        let interpreter = command.split_once(' ').unwrap().0.trim_matches('\'');
+        let interpreter_path = Path::new(interpreter);
+        assert!(
+            interpreter_path.is_absolute(),
+            "{event} uses a PATH-dependent interpreter: {command}"
+        );
+        assert!(
+            interpreter_path.is_file(),
+            "{event} interpreter does not exist: {interpreter}"
+        );
+    }
+
+    clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn install_codex_missing_bash_fails_before_mutation() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let codex_home = base.join("codex-home");
+    let empty_bin = base.join("empty-bin");
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::create_dir_all(&empty_bin).unwrap();
+    let config_path = codex_home.join("config.toml");
+    fs::write(&config_path, "model = \"keep\"\n").unwrap();
+    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_home);
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", &empty_bin);
+
+    let error = install_codex().unwrap_err().to_string();
+
+    if let Some(path) = original_path {
+        std::env::set_var("PATH", path);
+    } else {
+        std::env::remove_var("PATH");
+    }
+    assert!(error.contains("executable bash was not found"), "{error}");
+    assert!(!codex_home.join(CODEX_HOOK_INSTALL_NAME).exists());
+    assert!(!codex_home.join("hooks.json").exists());
+    assert_eq!(
+        fs::read_to_string(&config_path).unwrap(),
+        "model = \"keep\"\n"
+    );
+
+    clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(not(windows))]
+#[test]
 fn install_codex_canonicalizes_owned_absolute_bash_hooks_and_preserves_lookalikes() {
     let _lock = integration_env_lock();
     let base = unique_base();
@@ -2029,7 +2096,7 @@ fn install_codex_canonicalizes_owned_absolute_bash_hooks_and_preserves_lookalike
         );
         assert_eq!(
             owned[0]["command"],
-            hook_command(&installed.hook_path, Some(action))
+            resolved_bash_hook_command(&installed.hook_path, Some(action)).unwrap()
         );
     }
     assert_eq!(

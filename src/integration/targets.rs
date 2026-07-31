@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use super::command::{hook_command, shell_single_quote};
+use super::command::{hook_command, resolved_bash_hook_command, shell_single_quote};
 use super::config_edit::{
     build_codex_config_with_hooks, build_kimi_config_with_hooks, ensure_command_hook,
     ensure_direct_command_hook, ensure_hermes_plugin_enabled, ensure_hooks_object,
@@ -200,6 +200,9 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
     }
 
     let hook_path = dir.join(CODEX_HOOK_INSTALL_NAME);
+    let session_command = resolved_bash_hook_command(&hook_path, Some("session"))?;
+    let stop_command = resolved_bash_hook_command(&hook_path, Some("mail-done"))?;
+    let permission_command = resolved_bash_hook_command(&hook_path, Some("mail-blocked"))?;
     fs::write(&hook_path, render_hook_asset(CODEX_HOOK_ASSET))?;
     make_executable(&hook_path)?;
 
@@ -226,27 +229,9 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
     remove_owned_codex_hook_commands(hooks, "SessionStart", &hook_path, "session")?;
     remove_owned_codex_hook_commands(hooks, "Stop", &hook_path, "mail-done")?;
     remove_owned_codex_hook_commands(hooks, "PermissionRequest", &hook_path, "mail-blocked")?;
-    ensure_command_hook(
-        hooks,
-        "SessionStart",
-        hook_command(&hook_path, Some("session")),
-        10,
-        None,
-    )?;
-    ensure_command_hook(
-        hooks,
-        "Stop",
-        hook_command(&hook_path, Some("mail-done")),
-        10,
-        None,
-    )?;
-    ensure_command_hook(
-        hooks,
-        "PermissionRequest",
-        hook_command(&hook_path, Some("mail-blocked")),
-        10,
-        None,
-    )?;
+    ensure_command_hook(hooks, "SessionStart", session_command, 10, None)?;
+    ensure_command_hook(hooks, "Stop", stop_command, 10, None)?;
+    ensure_command_hook(hooks, "PermissionRequest", permission_command, 10, None)?;
     remove_legacy_bash_hook_file(&hook_path)?;
 
     fs::write(&hooks_path, serde_json::to_string_pretty(&hooks_file)?)?;

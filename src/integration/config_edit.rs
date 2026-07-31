@@ -3,8 +3,6 @@ use std::path::Path;
 
 use serde_json::{json, Map, Value};
 
-#[cfg(not(windows))]
-use super::command::shell_single_quote;
 use super::command::{hook_command, legacy_bash_hook_command};
 #[cfg(windows)]
 use super::file_ops::legacy_bash_hook_path;
@@ -373,18 +371,17 @@ fn codex_command_invokes_hook(command: &str, hook_path: &Path, action: &str) -> 
 
 #[cfg(not(windows))]
 fn bash_command_invokes_hook(command: &str, hook_path: &Path, action: &str) -> bool {
-    let Some((interpreter, invocation)) = command.split_once(' ') else {
+    let Ok(arguments) = shell_words::split(command) else {
+        return false;
+    };
+    let [interpreter, script, command_action] = arguments.as_slice() else {
         return false;
     };
     if interpreter != "bash" && !(interpreter.starts_with('/') && interpreter.ends_with("/bash")) {
         return false;
     }
 
-    invocation
-        == format!(
-            "{} {action}",
-            shell_single_quote(&hook_path.display().to_string())
-        )
+    script == &hook_path.display().to_string() && command_action == action
 }
 
 pub(crate) fn remove_direct_hook_commands(

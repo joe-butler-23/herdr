@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::command::hook_command;
+use super::command::{hook_command, resolved_bash_hook_command};
 use super::config_edit::{build_codex_config_with_hooks, is_owned_codex_hook_command};
 use super::env::*;
 
@@ -698,7 +698,7 @@ fn codex_command_hook_registrations_are_current(
                     continue;
                 };
 
-                if command_text != hook_command(hook_path, Some(expectation.action))
+                if command_text != resolved_bash_hook_command(hook_path, Some(expectation.action))?
                     || matcher != expectation.matcher
                     || command.get("timeout").and_then(Value::as_u64) != Some(10)
                 {
